@@ -1079,3 +1079,65 @@ fn test_native_plugin_and_libs() {
     let _ = std::fs::remove_file(sdl_bin);
     let _ = std::fs::remove_file(format!("{}.c", sdl_bin));
 }
+
+#[test]
+fn test_library_and_game_engine() {
+    // 1. Test 'oxide new <name> --lib' scaffold
+    let lib_proj = "target/test_lib_sample";
+    let _ = std::fs::remove_dir_all(lib_proj);
+
+    let new_lib = Command::new("cargo")
+        .args(["run", "--quiet", "--", "new", lib_proj, "--lib"])
+        .status()
+        .expect("oxide new --lib failed");
+    assert!(new_lib.success());
+    assert!(std::path::Path::new(&format!("{}/src/lib.ox", lib_proj)).exists());
+    assert!(std::path::Path::new(&format!("{}/tests/test_basic.ox", lib_proj)).exists());
+
+    // 2. Test 'oxide test' inside the created library
+    let test_run = Command::new("cargo")
+        .args(["run", "--quiet", "--", "test", lib_proj])
+        .output()
+        .expect("oxide test failed");
+    assert!(test_run.status.success());
+    let test_stdout = String::from_utf8_lossy(&test_run.stdout);
+    assert!(test_stdout.contains("1 geçti; 0 başarısız oldu"));
+
+    // 3. Test running examples/game_engine_demo.ox via interpreter
+    let run_output = Command::new("cargo")
+        .args(["run", "--quiet", "--", "run", "examples/game_engine_demo.ox"])
+        .output()
+        .expect("run game_engine_demo failed");
+    assert!(run_output.status.success());
+    let run_stdout = String::from_utf8_lossy(&run_output.stdout);
+    assert!(run_stdout.contains("🎮 OXIDE 2D OYUN MOTORU & KÜTÜPHANE SİSTEMİ DEMO"));
+    assert!(run_stdout.contains("Hipotenüs Uzunluğu (3-4-5 Üçgeni): 5"));
+    assert!(run_stdout.contains("Oyuncu ve Düşman Çarpışıyor mu?: true"));
+    assert!(run_stdout.contains("Oyuncu ve Uzak Engel Çarpışıyor mu?: false"));
+    assert!(run_stdout.contains("✔ Oyun Motoru Kütüphanesi Başarıyla Çalıştırıldı!"));
+
+    // 4. Test building examples/game_engine_demo.ox into GCC native binary
+    let bin_path = "examples/test_native_game_engine_bin";
+    let build_status = Command::new("cargo")
+        .args(["run", "--quiet", "--", "build", "examples/game_engine_demo.ox", "-o", bin_path])
+        .status()
+        .expect("build game_engine_demo failed");
+    assert!(build_status.success());
+
+    // 5. Execute native binary and assert 100% parity with interpreter
+    let exec_output = Command::new(format!("./{}", bin_path))
+        .output()
+        .expect("execute game_engine_demo binary failed");
+    assert!(exec_output.status.success());
+    let exec_stdout = String::from_utf8_lossy(&exec_output.stdout);
+    assert!(exec_stdout.contains("🎮 OXIDE 2D OYUN MOTORU & KÜTÜPHANE SİSTEMİ DEMO"));
+    assert!(exec_stdout.contains("Hipotenüs Uzunluğu (3-4-5 Üçgeni): 5"));
+    assert!(exec_stdout.contains("Oyuncu ve Düşman Çarpışıyor mu?: true"));
+    assert!(exec_stdout.contains("Oyuncu ve Uzak Engel Çarpışıyor mu?: false"));
+    assert!(exec_stdout.contains("✔ Oyun Motoru Kütüphanesi Başarıyla Çalıştırıldı!"));
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all(lib_proj);
+    let _ = std::fs::remove_file(bin_path);
+    let _ = std::fs::remove_file(format!("{}.c", bin_path));
+}

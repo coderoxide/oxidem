@@ -106,8 +106,8 @@ pub fn find_oxide_toml() -> Option<(PathBuf, PackageConfig)> {
     None
 }
 
-/// Scaffolds a new Oxide project (`oxide new <name>`).
-pub fn init_new_project(name: &str) -> Result<(), String> {
+/// Scaffolds a new Oxide project (`oxide new <name> [--lib]`).
+pub fn init_new_project(name: &str, is_lib: bool) -> Result<(), String> {
     let root = Path::new(name);
     if root.exists() {
         return Err(format!("'{}' dizini zaten mevcut", name));
@@ -121,50 +121,85 @@ pub fn init_new_project(name: &str) -> Result<(), String> {
     fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
     fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
 
+    let (entry_file, entry_code, desc) = if is_lib {
+        (
+            "src/lib.ox",
+            r#"/// Temel yardımcı fonksiyonlar sağlayan Oxide kütüphanesi.
+
+/// İki tamsayıyı toplayarak sonucu döner.
+fn topla(a: int, b: int) -> int {
+    a + b
+}
+
+/// İki tamsayıyı çarparak sonucu döner.
+fn carp(a: int, b: int) -> int {
+    a * b
+}
+"#,
+            "Oxide ile yazılmış yeni bir kütüphane paketi",
+        )
+    } else {
+        (
+            "src/main.ox",
+            r#"fn main() -> void {
+    println("Merhaba, Oxide!");
+}
+"#,
+            "Oxide ile yazılmış yeni bir uygulama projesi",
+        )
+    };
+
     let toml_content = format!(
         r#"[package]
 name = "{}"
 version = "0.1.0"
-entry = "src/main.ox"
-description = "Oxide ile yazılmış yeni bir proje"
+entry = "{}"
+description = "{}"
 "#,
-        pkg_name
+        pkg_name, entry_file, desc
     );
     fs::write(root.join("oxide.toml"), toml_content).map_err(|e| e.to_string())?;
 
     let gitignore_content = "/target/\n";
     fs::write(root.join(".gitignore"), gitignore_content).map_err(|e| e.to_string())?;
 
-    let main_ox = r#"fn main() -> void {
-    println("Merhaba, Oxide!");
-}
-"#;
-    fs::write(root.join("src/main.ox"), main_ox).map_err(|e| e.to_string())?;
+    fs::write(root.join(entry_file), entry_code).map_err(|e| e.to_string())?;
 
-    let test_ox = r#"fn test_ornek() -> void {
-    let x = 10 + 20;
-    assert(x == 30, "10 + 20 esit olmali 30");
+    let test_ox = if is_lib {
+        r#"import "../src/lib.ox";
+
+fn test_kutuphane() -> void {
+    assert(topla(10, 20) == 30);
+    assert(carp(5, 6) == 30);
 }
-"#;
+"#
+    } else {
+        r#"fn test_ornek() -> void {
+    let x = 10 + 20;
+    assert(x == 30);
+}
+"#
+    };
     fs::write(root.join("tests/test_basic.ox"), test_ox).map_err(|e| e.to_string())?;
 
     let cfg = PackageConfig {
         name: pkg_name.to_string(),
         version: "0.1.0".to_string(),
-        entry: "src/main.ox".to_string(),
-        description: Some("Oxide ile yazılmış yeni bir proje".to_string()),
+        entry: entry_file.to_string(),
+        description: Some(desc.to_string()),
         libs: Vec::new(),
         lib_paths: Vec::new(),
     };
     update_lockfile(root, &cfg)?;
 
-    println!("✔ '{}' Oxide projesi başarıyla oluşturuldu!", name);
+    let p_type = if is_lib { "kütüphane" } else { "uygulama" };
+    println!("✔ '{}' Oxide {} projesi başarıyla oluşturuldu!", name, p_type);
     println!("  ├── oxide.toml");
     println!("  ├── oxide.lock");
     println!("  ├── .gitignore");
-    println!("  ├── src/main.ox");
+    println!("  ├── {}", entry_file);
     println!("  └── tests/test_basic.ox");
-    println!("\nBaşlamak için:\n  cd {}\n  oxide run\n  oxide build", name);
+    println!("\nBaşlamak için:\n  cd {}\n  oxide test\n  oxide check", name);
 
     Ok(())
 }
@@ -277,6 +312,7 @@ pub fn run_tests(target: Option<&str>) -> bool {
         };
 
         let mut checker = TypeChecker::new();
+        checker.allow_no_main = true;
         if let Err(e) = checker.check_program(&program) {
             eprintln!("Tip Hatası [{}]: {}", file_str, e);
             total_failed += 1;

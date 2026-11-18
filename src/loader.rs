@@ -65,41 +65,60 @@ impl ModuleLoader {
     }
 
     fn resolve_file_path(&self, requested: &Path, base_dir: Option<&Path>) -> Result<PathBuf, String> {
-        let full_path = if requested.is_absolute() {
-            requested.to_path_buf()
-        } else if let Some(base) = base_dir {
-            base.join(requested)
-        } else {
-            requested.to_path_buf()
-        };
-
-        // Try exact path
-        if full_path.is_file() {
-            return fs::canonicalize(&full_path).map_err(|e| format!("Dosya yolu çözümlenemedi '{}': {}", full_path.display(), e));
-        }
-
-        // Try appending .ox if missing
-        if full_path.extension().is_none() {
-            let with_ox = full_path.with_extension("ox");
-            if with_ox.is_file() {
-                return fs::canonicalize(&with_ox).map_err(|e| format!("Dosya yolu çözümlenemedi '{}': {}", with_ox.display(), e));
-            }
-        }
-
-        // Also fallback to project root / current working directory if relative to base_dir was not found
-        if base_dir.is_some() {
+        if requested.is_absolute() {
             if requested.is_file() {
                 return fs::canonicalize(requested).map_err(|e| format!("Dosya yolu çözümlenemedi '{}': {}", requested.display(), e));
             }
-            if requested.extension().is_none() {
-                let with_ox = requested.with_extension("ox");
+            let with_ox = requested.with_extension("ox");
+            if with_ox.is_file() {
+                return fs::canonicalize(&with_ox).map_err(|e| format!("Dosya yolu çözümlenemedi '{}': {}", with_ox.display(), e));
+            }
+            return Err(format!("Dosya bulunamadı: '{}'", requested.display()));
+        }
+
+        let mut candidates = Vec::new();
+
+        // 1. Relative to base_dir
+        if let Some(base) = base_dir {
+            candidates.push(base.join(requested));
+        }
+
+        // 2. Relative to current working directory / project root
+        candidates.push(requested.to_path_buf());
+
+        // 3. Inside local 'libs/' directory
+        candidates.push(Path::new("libs").join(requested));
+        candidates.push(Path::new("libs").join(requested).join("lib.ox"));
+        candidates.push(Path::new("libs").join(requested).join("mod.ox"));
+
+        // 4. Inside local 'plugins/' directory
+        candidates.push(Path::new("plugins").join(requested));
+        candidates.push(Path::new("plugins").join(requested).join("interface.ox"));
+
+        // 5. Global ~/.oxide/libs repository
+        if let Ok(home) = std::env::var("HOME") {
+            let global_libs = PathBuf::from(home).join(".oxide").join("libs");
+            candidates.push(global_libs.join(requested));
+            candidates.push(global_libs.join(requested).join("lib.ox"));
+        }
+
+        for cand in candidates {
+            if cand.is_file() {
+                if let Ok(canon) = fs::canonicalize(&cand) {
+                    return Ok(canon);
+                }
+            }
+            if cand.extension().is_none() {
+                let with_ox = cand.with_extension("ox");
                 if with_ox.is_file() {
-                    return fs::canonicalize(&with_ox).map_err(|e| format!("Dosya yolu çözümlenemedi '{}': {}", with_ox.display(), e));
+                    if let Ok(canon) = fs::canonicalize(&with_ox) {
+                        return Ok(canon);
+                    }
                 }
             }
         }
 
-        Err(format!("Dosya bulunamadı: '{}'", full_path.display()))
+        Err(format!("Modül veya kütüphane bulunamadı: '{}'", requested.display()))
     }
 
     fn load_file(&mut self, file_path: &Path) -> Result<Program, String> {

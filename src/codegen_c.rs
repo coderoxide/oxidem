@@ -513,7 +513,14 @@ impl CodegenC {
             Type::Char => "char".to_string(),
             Type::U8 => "uint8_t".to_string(),
             Type::Void => "void".to_string(),
-            Type::Array(_) => "int64_t*".to_string(),
+            Type::Array(inner) => {
+                if **inner == Type::Void {
+                    "void*".to_string()
+                } else {
+                    let inner_c = self.to_c_type(inner);
+                    format!("{}*", inner_c)
+                }
+            },
             Type::Slice(_) => "_OxSlice".to_string(),
             Type::StrSlice => "_OxStrSlice".to_string(),
             Type::Tuple(types) => self.c_tuple_name(types),
@@ -1135,7 +1142,7 @@ impl CodegenC {
         self.write_line("    default: _ox_arr_len \\");
         self.write_line(")(x)");
         self.write_line("");
-        self.write_line("#define push(arr, val) ((arr) = _ox_arr_push_impl((arr), (int64_t)(val)))");
+        self.write_line("#define push(arr, val) ((arr) = (__typeof__(arr))_ox_arr_push_impl((int64_t*)(arr), (int64_t)(val)))");
         self.write_line("#define pop(arr) (_OX_ARRAY_HDR(arr)->len > 0 ? (arr)[--_OX_ARRAY_HDR(arr)->len] : 0LL)");
         self.write_line("");
         self.write_line("static inline const char* _ox_read_file(const char* path) {");
@@ -2595,7 +2602,9 @@ impl CodegenC {
                 let r = self.compile_expr(right);
                 match op {
                     BinOp::Add => {
-                        if expr_has_str(left) || expr_has_str(right) {
+                        let l_ty = self.infer_expr_type(left);
+                        let r_ty = self.infer_expr_type(right);
+                        if l_ty == Type::Str || r_ty == Type::Str || l_ty == Type::StrSlice || r_ty == Type::StrSlice || expr_has_str(left) || expr_has_str(right) {
                             format!("_ox_add_str({}, {})", l, r)
                         } else {
                             format!("({} + {})", l, r)
@@ -2650,7 +2659,11 @@ impl CodegenC {
                     inits.push(format!("_a[{}] = {};", idx, val));
                 }
                 inits.push("_a;".to_string());
-                format!("({{ {} }})", inits.join(" "))
+                if elements.is_empty() {
+                    format!("((void*)({{ {} }}))", inits.join(" "))
+                } else {
+                    format!("({{ {} }})", inits.join(" "))
+                }
             }
             Expr::Index { target, index, .. } => {
                 let target_ty = self.infer_expr_type(target);
@@ -2827,11 +2840,16 @@ impl CodegenC {
                     }
                     "to_str" | "to_string" => format!("_ox_to_str_str_slice({})", t),
                     _ => {
+                        let is_ptr = t == "self" || matches!(target_ty, Type::Box(_) | Type::Rc(_) | Type::RefCell(_) | Type::Ref { .. } | Type::RawPtr { .. });
+                        let is_lvalue = matches!(**target, Expr::Ident(..) | Expr::FieldAccess { .. } | Expr::Index { .. });
+
                         let mut arg_strs = Vec::new();
-                        if t == "self" || matches!(target_ty, Type::Box(_) | Type::Rc(_) | Type::RefCell(_) | Type::Ref { .. } | Type::RawPtr { .. }) {
-                            arg_strs.push(t);
-                        } else {
+                        if is_ptr {
+                            arg_strs.push(t.clone());
+                        } else if is_lvalue {
                             arg_strs.push(format!("&({})", t));
+                        } else {
+                            arg_strs.push("&_ox_tmp".to_string());
                         }
                         for a in args {
                             arg_strs.push(self.compile_expr(a));
@@ -2860,7 +2878,12 @@ impl CodegenC {
                             }
                         };
 
-                        format!("{}_{}({})", struct_name, method, arg_strs.join(", "))
+                        let raw_call = format!("{}_{}({})", struct_name, method, arg_strs.join(", "));
+                        if !is_ptr && !is_lvalue {
+                            format!("({{ __auto_type _ox_tmp = ({}); {}; }})", t, raw_call)
+                        } else {
+                            raw_call
+                        }
                     }
                 }
             }
@@ -3084,7 +3107,12 @@ impl CodegenC {
                 self.compile_expr(&Expr::Block(block.clone()))
             }
             Expr::Borrow { expr, .. } => {
-                format!("(&({}))", self.compile_expr(expr))
+                let t = self.compile_expr(expr);
+                if matches!(**expr, Expr::Ident(..) | Expr::FieldAccess { .. } | Expr::Index { .. }) {
+                    format!("(&({}))", t)
+                } else {
+                    format!("({{ __auto_type _tmp = ({}); &_tmp; }})", t)
+                }
             }
             Expr::Deref { expr, .. } => {
                 let inner_code = self.compile_expr(expr);

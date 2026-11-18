@@ -44,10 +44,19 @@ fn main() {
     match args[1].as_str() {
         "new" => {
             if args.len() < 3 {
-                eprintln!("Kullanım: oxide new <proje_adi>");
+                eprintln!("Kullanım: oxide new <proje_adi> [--lib]");
                 return;
             }
-            if let Err(e) = project::init_new_project(&args[2]) {
+            let is_lib = args.iter().skip(2).any(|a| a == "--lib");
+            let name_arg = args.iter().skip(2).find(|a| *a != "--lib").map(|s| s.as_str());
+            let name = match name_arg {
+                Some(n) => n,
+                None => {
+                    eprintln!("Hata: Proje adı belirtilmedi");
+                    return;
+                }
+            };
+            if let Err(e) = project::init_new_project(name, is_lib) {
                 eprintln!("Hata: {}", e);
             }
         }

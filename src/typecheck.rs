@@ -46,6 +46,7 @@ pub struct TypeChecker {
     current_fn_return: Option<Type>,
     loop_depth: usize,
     is_unsafe: bool,
+    pub allow_no_main: bool,
 }
 
 impl TypeChecker {
@@ -63,6 +64,7 @@ impl TypeChecker {
             current_fn_return: None,
             loop_depth: 0,
             is_unsafe: false,
+            allow_no_main: false,
         }
     }
 
@@ -167,9 +169,9 @@ impl TypeChecker {
             }
         }
 
-        // Verify main function exists unless this is a test file
+        // Verify main function exists unless this is a test file or allow_no_main is set
         let has_test_fn = self.functions.keys().any(|k| k.starts_with("test"));
-        if !self.functions.contains_key("main") && !has_test_fn {
+        if !self.allow_no_main && !self.functions.contains_key("main") && !has_test_fn {
             return Err("Tip Hatası: Programda 'fn main()' giriş fonksiyonu bulunamadı.".to_string());
         }
 
@@ -240,6 +242,9 @@ impl TypeChecker {
             return true;
         }
         if let (Type::Option(d_in), Type::Option(i_in)) = (expected, actual) {
+            return **i_in == Type::Void || self.are_types_compatible(d_in, i_in);
+        }
+        if let (Type::Array(d_in), Type::Array(i_in)) = (expected, actual) {
             return **i_in == Type::Void || self.are_types_compatible(d_in, i_in);
         }
         if let (Type::Result(d_ok, d_err), Type::Result(i_ok, i_err)) = (expected, actual) {
