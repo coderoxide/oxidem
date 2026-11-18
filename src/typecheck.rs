@@ -232,7 +232,7 @@ impl TypeChecker {
     }
 
     fn are_types_compatible(&self, expected: &Type, actual: &Type) -> bool {
-        if expected == actual || *actual == Type::Void {
+        if expected == actual || *actual == Type::Void || *expected == Type::Void {
             return true;
         }
         if *expected == Type::U8 && *actual == Type::Int {
@@ -258,6 +258,18 @@ impl TypeChecker {
             return self.are_types_compatible(d_in, i_in);
         }
         if let (Type::RefCell(d_in), Type::RefCell(i_in)) = (expected, actual) {
+            return self.are_types_compatible(d_in, i_in);
+        }
+        if let (Type::JoinHandle(d_in), Type::JoinHandle(i_in)) = (expected, actual) {
+            return self.are_types_compatible(d_in, i_in);
+        }
+        if let (Type::Sender(d_in), Type::Sender(i_in)) = (expected, actual) {
+            return **i_in == Type::Void || self.are_types_compatible(d_in, i_in);
+        }
+        if let (Type::Receiver(d_in), Type::Receiver(i_in)) = (expected, actual) {
+            return **i_in == Type::Void || self.are_types_compatible(d_in, i_in);
+        }
+        if let (Type::Mutex(d_in), Type::Mutex(i_in)) = (expected, actual) {
             return self.are_types_compatible(d_in, i_in);
         }
         if let (Type::Slice(exp_in), Type::Array(act_in)) = (expected, actual) {
@@ -714,7 +726,7 @@ impl TypeChecker {
                         }
                     }
                     BinOp::Eq | BinOp::NotEq => {
-                        if l_ty == r_ty {
+                        if l_ty == r_ty || l_ty == Type::Void || r_ty == Type::Void || self.are_types_compatible(&l_ty, &r_ty) || self.are_types_compatible(&r_ty, &l_ty) {
                             Ok(Type::Bool)
                         } else {
                             Err(format!("Tip Hatası [{}:{}]: Karşılaştırma uyumsuz tipler arasında yapılamaz: '{}' ve '{}'", span.line, span.col, l_ty, r_ty))
@@ -1286,6 +1298,26 @@ impl TypeChecker {
                         if !args.is_empty() { return Err(format!("Tip Hatası [{}:{}]: 'borrow_mut()' argüman beklemez", span.line, span.col)); }
                         return Ok(Type::Ref { inner, is_mut: true });
                     }
+                    Type::JoinHandle(inner) if method == "join" => {
+                        if !args.is_empty() { return Err(format!("Tip Hatası [{}:{}]: 'join()' argüman beklemez", span.line, span.col)); }
+                        return Ok(Type::Result(inner, Box::new(Type::Str)));
+                    }
+                    Type::Sender(inner) if method == "send" => {
+                        if args.len() != 1 { return Err(format!("Tip Hatası [{}:{}]: 'send' 1 argüman bekler", span.line, span.col)); }
+                        let arg_ty = self.check_expr(&args[0])?;
+                        if *inner != Type::Void && !self.are_types_compatible(&inner, &arg_ty) {
+                            return Err(format!("Tip Hatası [{}:{}]: 'send' '{}' tipi beklerken '{}' verildi", span.line, span.col, inner, arg_ty));
+                        }
+                        return Ok(Type::Result(Box::new(Type::Void), Box::new(Type::Str)));
+                    }
+                    Type::Receiver(inner) if method == "recv" => {
+                        if !args.is_empty() { return Err(format!("Tip Hatası [{}:{}]: 'recv()' argüman beklemez", span.line, span.col)); }
+                        return Ok(Type::Result(inner, Box::new(Type::Str)));
+                    }
+                    Type::Mutex(inner) if method == "lock" => {
+                        if !args.is_empty() { return Err(format!("Tip Hatası [{}:{}]: 'lock()' argüman beklemez", span.line, span.col)); }
+                        return Ok(Type::Ref { inner, is_mut: true });
+                    }
                     Type::Box(ref inner) | Type::Rc(ref inner) => {
                         let mut curr_inner = (**inner).clone();
                         while let Type::Box(in_t) | Type::Rc(in_t) = curr_inner {
@@ -1319,6 +1351,43 @@ impl TypeChecker {
             }
             Expr::Call { callee, args, span, .. } => {
                 match callee.as_str() {
+                    "thread::spawn" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'thread::spawn' tam 1 closure/fonksiyon bekler", span.line, span.col));
+                        }
+                        let callable_ty = self.check_expr(&args[0])?;
+                        let ret_ty = match callable_ty {
+                            Type::Fn { ret, .. } => *ret,
+                            other => return Err(format!("Tip Hatası [{}:{}]: 'thread::spawn' fonksiyon veya closure bekler, bulunan: '{}'", span.line, span.col, other)),
+                        };
+                        return Ok(Type::JoinHandle(Box::new(ret_ty)));
+                    }
+                    "thread::sleep" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'thread::sleep' 1 argüman bekler: (ms: int)", span.line, span.col));
+                        }
+                        let ms_ty = self.check_expr(&args[0])?;
+                        if ms_ty != Type::Int {
+                            return Err(format!("Tip Hatası [{}:{}]: 'thread::sleep' bekleme süresini 'int' bekler", span.line, span.col));
+                        }
+                        return Ok(Type::Void);
+                    }
+                    "channel" => {
+                        if !args.is_empty() {
+                            return Err(format!("Tip Hatası [{}:{}]: 'channel' argüman beklemez: channel()", span.line, span.col));
+                        }
+                        return Ok(Type::Tuple(vec![
+                            Type::Sender(Box::new(Type::Void)),
+                            Type::Receiver(Box::new(Type::Void)),
+                        ]));
+                    }
+                    "Mutex::new" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'Mutex::new' tam 1 argüman bekler", span.line, span.col));
+                        }
+                        let inner_ty = self.check_expr(&args[0])?;
+                        return Ok(Type::Mutex(Box::new(inner_ty)));
+                    }
                     "Box::new" => {
                         if args.len() != 1 {
                             return Err(format!("Tip Hatası [{}:{}]: 'Box::new' tam 1 argüman bekler", span.line, span.col));

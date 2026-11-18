@@ -1161,6 +1161,76 @@ println("Aktif dizin:", pwd);
 * C seviyesinde `int main(int argc, char** argv)` argümanları otomatik yakalanıp `env::args()` fonksiyonuna aktarılır.
 * Yorumlayıcı (`oxide run`) ve Native Binary (`oxide build`) arasında %100 birebir davranış ve çıktı uyumu sağlanır.
 
+---
+
+## 24. Çoklu İş Parçacığı ve Eşzamanlılık (Concurrency & Multi-Threading)
+
+Oxide (v0.17.0+), modern işletim sistemi düzeyinde gerçek eşzamanlılık (multi-threading) ve güvenli mesajlaşma mimarisi sunar.
+
+### 24.1. Thread Başlatma (`thread::spawn`) ve Bekleme (`.join()`)
+Bir closure'ı bağımsız bir işletim sistemi iş parçacığında çalıştırır ve geri dönen `JoinHandle<T>` üzerinden thread'in tamamlanmasını ve sonucunu almayı sağlar:
+
+```rust
+let handle = thread::spawn(|| {
+    println("Arka plan işi çalışıyor...");
+    thread::sleep(100); // 100 milisaniye uyut
+    42
+});
+
+let sonuc = handle.join().unwrap();
+println("Thread dönüş değeri:", sonuc); // 42
+```
+
+### 24.2. Uyku / Bekleme (`thread::sleep`)
+Mevcut iş parçacığını milisaniye cinsinden duraklatır:
+```rust
+thread::sleep(500); // 500 ms duraklat
+```
+
+### 24.3. Kanallar (Channel) ve Mesajlaşma (Producer - Consumer)
+`channel()` fonksiyonu, iki thread arasında veri taşımak için bir `(Sender<T>, Receiver<T>)` demeti üretir:
+* `tx.send(deger)`: Kanala mesaj yazar (`Result<void, str>`).
+* `rx.recv()`: Kanaldan mesaj gelene kadar thread'i bloke ederek bekler (`Result<T, str>`).
+
+```rust
+let (tx, rx) = channel();
+
+thread::spawn(|| {
+    tx.send("Görev 1 tamamlandı");
+    thread::sleep(50);
+    tx.send("Görev 2 tamamlandı");
+    0
+});
+
+let m1 = rx.recv().unwrap();
+let m2 = rx.recv().unwrap();
+println("Alınan mesajlar:", m1, m2);
+```
+
+### 24.4. Karşılıklı Dışlama ve Korumalı Veri (`Mutex<T>`)
+Thread'ler arası paylaşılan veriyi veri yarışlarına (data race) karşı korumak için `Mutex::new(val)` kullanılır:
+* `m.lock()`: Mutex kilidini alır ve içindeki veriye doğrudan erişim/mutasyon referansı (`&mut T`) döner.
+* Recursive mutex mimarisi sayesinde aynı iş parçacığında deadlock oluşması önlenir.
+
+```rust
+let sayac = Mutex::new(0);
+
+{
+    let guard = sayac.lock();
+    *guard = *guard + 10;
+}
+
+let guncel = *sayac.lock();
+println("Sayaç:", guncel); // 10
+```
+
+### 24.5. Sıfır Bağımlılık & Native POSIX Thread Linkajı
+* Oxide Yorumlayıcısı: Rust `std::thread`, `std::sync::{Arc, Mutex, mpsc}` ile tam thread-safe (`Send + Sync`) çalışır.
+* Native C Binary (`oxide build`): Saf C koduna transpile edilir ve standart `<pthread.h>` / `<time.h>` kullanır.
+* GCC derlemesi otomatik olarak `-pthread -lm -O2` bayraklarıyla yürütülür.
+* Yorumlayıcı (`oxide run`) ve GCC native binary (`oxide build`) arasında %100 çıktı ve davranış uyumu (parity) garanti edilir.
+
+
 
 
 

@@ -1,10 +1,14 @@
 use std::collections::HashMap;
-use std::rc::Rc;
-use std::cell::RefCell;
+use std::sync::{Arc, Mutex, mpsc};
+
+pub type Shared<T> = Arc<Mutex<T>>;
+pub fn shared<T>(val: T) -> Shared<T> {
+    Arc::new(Mutex::new(val))
+}
 use crate::ast::*;
 use crate::span::Span;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Int(i64),
     Float(f64),
@@ -12,34 +16,38 @@ pub enum Value {
     Str(String),
     Char(char),
     U8(u8),
-    Array(Rc<RefCell<Vec<Value>>>),
+    Array(Shared<Vec<Value>>),
     Slice {
-        target: Rc<RefCell<Vec<Value>>>,
+        target: Shared<Vec<Value>>,
         start: usize,
         len: usize,
     },
     StrSlice {
-        target: Rc<String>,
+        target: Arc<String>,
         start: usize,
         len: usize,
     },
     Struct {
         name: String,
-        fields: Rc<RefCell<HashMap<String, Value>>>,
+        fields: Shared<HashMap<String, Value>>,
     },
     EnumVariant {
         enum_name: String,
         variant: String,
     },
     Ref {
-        val: Rc<RefCell<Value>>,
+        val: Shared<Value>,
         is_mut: bool,
     },
-    Map(Rc<RefCell<HashMap<String, Value>>>),
-    Tuple(Rc<RefCell<Vec<Value>>>),
-    Box(Rc<RefCell<Value>>),
-    Rc(Rc<RefCell<Value>>, Rc<RefCell<usize>>),
-    RefCell(Rc<RefCell<Value>>),
+    Map(Shared<HashMap<String, Value>>),
+    Tuple(Shared<Vec<Value>>),
+    Box(Shared<Value>),
+    Rc(Shared<Value>, Shared<usize>),
+    RefCell(Shared<Value>),
+    JoinHandle(Arc<Mutex<Option<std::thread::JoinHandle<Result<Value, String>>>>>),
+    Sender(Arc<mpsc::Sender<Value>>),
+    Receiver(Arc<Mutex<mpsc::Receiver<Value>>>),
+    Mutex(Arc<Mutex<Value>>),
     Some(Box<Value>),
     None,
     Ok(Box<Value>),
@@ -52,6 +60,29 @@ pub enum Value {
     Void,
 }
 
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Str(a), Value::Str(b)) => a == b,
+            (Value::Char(a), Value::Char(b)) => a == b,
+            (Value::U8(a), Value::U8(b)) => a == b,
+            (Value::Some(a), Value::Some(b)) => a == b,
+            (Value::None, Value::None) => true,
+            (Value::Ok(a), Value::Ok(b)) => a == b,
+            (Value::Err(a), Value::Err(b)) => a == b,
+            (Value::Void, Value::Void) => true,
+            (Value::JoinHandle(a), Value::JoinHandle(b)) => Arc::ptr_eq(a, b),
+            (Value::Sender(a), Value::Sender(b)) => Arc::ptr_eq(a, b),
+            (Value::Receiver(a), Value::Receiver(b)) => Arc::ptr_eq(a, b),
+            (Value::Mutex(a), Value::Mutex(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -61,15 +92,15 @@ impl std::fmt::Display for Value {
             Value::Str(s) => write!(f, "{}", s),
             Value::Char(c) => write!(f, "{}", c),
             Value::U8(b) => write!(f, "{}", b),
-            Value::Ref { val, .. } => write!(f, "&{}", val.borrow()),
+            Value::Ref { val, .. } => write!(f, "&{}", val.lock().unwrap()),
             Value::Closure { .. } => write!(f, "<closure>"),
             Value::Array(arr) => {
-                let inner = arr.borrow();
+                let inner = arr.lock().unwrap();
                 let elements = inner.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
                 write!(f, "[{}]", elements)
             }
             Value::Slice { target, start, len } => {
-                let inner = target.borrow();
+                let inner = target.lock().unwrap();
                 let end = (*start + *len).min(inner.len());
                 let slice_elems = &inner[*start..end];
                 let elements = slice_elems.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
@@ -80,12 +111,12 @@ impl std::fmt::Display for Value {
                 write!(f, "{}", &target[*start..end])
             }
             Value::Tuple(arr) => {
-                let inner = arr.borrow();
+                let inner = arr.lock().unwrap();
                 let elements = inner.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
                 write!(f, "({})", elements)
             }
             Value::Map(m) => {
-                let inner = m.borrow();
+                let inner = m.lock().unwrap();
                 let mut entries = Vec::new();
                 for (k, v) in inner.iter() {
                     entries.push(format!("\"{}\": {}", k, v));
@@ -93,7 +124,7 @@ impl std::fmt::Display for Value {
                 write!(f, "Map {{ {} }}", entries.join(", "))
             }
             Value::Struct { name, fields } => {
-                let inner = fields.borrow();
+                let inner = fields.lock().unwrap();
                 let mut field_strs = Vec::new();
                 for (k, v) in inner.iter() {
                     field_strs.push(format!("{}: {}", k, v));
@@ -103,9 +134,16 @@ impl std::fmt::Display for Value {
             Value::EnumVariant { enum_name, variant } => {
                 write!(f, "{}::{}", enum_name, variant)
             }
-            Value::Box(inner) => write!(f, "Box({})", inner.borrow()),
-            Value::Rc(inner, _) => write!(f, "Rc({})", inner.borrow()),
-            Value::RefCell(inner) => write!(f, "RefCell({})", inner.borrow()),
+            Value::Box(inner) => write!(f, "Box({})", inner.lock().unwrap()),
+            Value::Rc(inner, _) => write!(f, "Rc({})", inner.lock().unwrap()),
+            Value::RefCell(inner) => write!(f, "RefCell({})", inner.lock().unwrap()),
+            Value::JoinHandle(_) => write!(f, "JoinHandle"),
+            Value::Sender(_) => write!(f, "Sender"),
+            Value::Receiver(_) => write!(f, "Receiver"),
+            Value::Mutex(m) => {
+                let inner = m.lock().unwrap();
+                write!(f, "Mutex({})", inner)
+            }
             Value::Some(v) => write!(f, "Some({})", v),
             Value::None => write!(f, "None"),
             Value::Ok(v) => write!(f, "Ok({})", v),
@@ -289,20 +327,20 @@ impl Interpreter {
                 if args.len() != 1 {
                     return Err(format!("Hata [{}:{}]: 'Box::new' 1 argüman bekler", span.line, span.col));
                 }
-                return Ok(Value::Box(Rc::new(RefCell::new(args.into_iter().next().unwrap()))));
+                return Ok(Value::Box(shared(args.into_iter().next().unwrap())));
             }
             "Rc::new" => {
                 if args.len() != 1 {
                     return Err(format!("Hata [{}:{}]: 'Rc::new' 1 argüman bekler", span.line, span.col));
                 }
-                return Ok(Value::Rc(Rc::new(RefCell::new(args.into_iter().next().unwrap())), Rc::new(RefCell::new(1))));
+                return Ok(Value::Rc(shared(args.into_iter().next().unwrap()), shared(1)));
             }
             "Rc::strong_count" => {
                 if args.len() != 1 {
                     return Err(format!("Hata [{}:{}]: 'Rc::strong_count' 1 argüman bekler", span.line, span.col));
                 }
                 match &args[0] {
-                    Value::Rc(_, count) => return Ok(Value::Int(*count.borrow() as i64)),
+                    Value::Rc(_, count) => return Ok(Value::Int(*count.lock().unwrap() as i64)),
                     _ => return Err(format!("Hata [{}:{}]: 'Rc::strong_count' Rc<T> nesnesi bekler", span.line, span.col)),
                 }
             }
@@ -310,7 +348,7 @@ impl Interpreter {
                 if args.len() != 1 {
                     return Err(format!("Hata [{}:{}]: 'RefCell::new' 1 argüman bekler", span.line, span.col));
                 }
-                return Ok(Value::RefCell(Rc::new(RefCell::new(args.into_iter().next().unwrap()))));
+                return Ok(Value::RefCell(shared(args.into_iter().next().unwrap())));
             }
             "Ok" => {
                 if args.len() != 1 {
@@ -323,6 +361,71 @@ impl Interpreter {
                     return Err(format!("Hata [{}:{}]: 'Err' 1 argüman bekler", span.line, span.col));
                 }
                 return Ok(Value::Err(Box::new(args.into_iter().next().unwrap())));
+            }
+            "thread::spawn" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'thread::spawn' 1 argüman bekler", span.line, span.col));
+                }
+                match &args[0] {
+                    Value::Closure { params: _, body, env: captured_env } => {
+                        let body = body.clone();
+                        let captured_env = captured_env.clone();
+                        let functions = self.functions.clone();
+                        let structs = self.structs.clone();
+                        let methods = self.methods.clone();
+                        let enums = self.enums.clone();
+                        let constants = self.constants.clone();
+
+                        let handle = std::thread::spawn(move || -> Result<Value, String> {
+                            let mut thread_interp = Interpreter {
+                                functions,
+                                structs,
+                                methods,
+                                enums,
+                                constants,
+                                env: captured_env,
+                                early_return: None,
+                            };
+                            thread_interp.env.enter_scope();
+                            let res = match thread_interp.eval_block(&body)? {
+                                ControlFlow::Normal(v) | ControlFlow::Return(v) => Ok(v),
+                                _ => Err("Thread closure içinde break/continue kullanılamaz".to_string()),
+                            };
+                            thread_interp.env.exit_scope();
+                            res
+                        });
+                        return Ok(Value::JoinHandle(Arc::new(Mutex::new(Some(handle)))));
+                    }
+                    _ => return Err(format!("Hata [{}:{}]: 'thread::spawn' closure bekler", span.line, span.col)),
+                }
+            }
+            "thread::sleep" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'thread::sleep' 1 argüman (ms) bekler", span.line, span.col));
+                }
+                match &args[0] {
+                    Value::Int(ms) => {
+                        std::thread::sleep(std::time::Duration::from_millis(*ms as u64));
+                        return Ok(Value::Void);
+                    }
+                    _ => return Err(format!("Hata [{}:{}]: 'thread::sleep' tamsayı bekler", span.line, span.col)),
+                }
+            }
+            "channel" => {
+                if !args.is_empty() {
+                    return Err(format!("Hata [{}:{}]: 'channel' argüman beklemez: channel()", span.line, span.col));
+                }
+                let (tx, rx) = mpsc::channel();
+                return Ok(Value::Tuple(shared(vec![
+                    Value::Sender(Arc::new(tx)),
+                    Value::Receiver(Arc::new(Mutex::new(rx))),
+                ])));
+            }
+            "Mutex::new" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'Mutex::new' 1 argüman bekler", span.line, span.col));
+                }
+                return Ok(Value::Mutex(Arc::new(Mutex::new(args.into_iter().next().unwrap()))));
             }
             "format" => {
                 if args.is_empty() {
@@ -377,7 +480,7 @@ impl Interpreter {
                     return Err(format!("Hata [{}:{}]: 'len' fonksiyonu tam olarak 1 argüman bekler", span.line, span.col));
                 }
                 return match &args[0] {
-                    Value::Array(arr) => Ok(Value::Int(arr.borrow().len() as i64)),
+                    Value::Array(arr) => Ok(Value::Int(arr.lock().unwrap().len() as i64)),
                     Value::Slice { len, .. } => Ok(Value::Int(*len as i64)),
                     Value::Str(s) => Ok(Value::Int(s.len() as i64)),
                     Value::StrSlice { len, .. } => Ok(Value::Int(*len as i64)),
@@ -390,7 +493,7 @@ impl Interpreter {
                 }
                 match &args[0] {
                     Value::Array(arr) => {
-                        arr.borrow_mut().push(args[1].clone());
+                        arr.lock().unwrap().push(args[1].clone());
                         return Ok(Value::Void);
                     }
                     _ => return Err(format!("Hata [{}:{}]: 'push' ilk argüman olarak dizi bekler", span.line, span.col)),
@@ -402,7 +505,7 @@ impl Interpreter {
                 }
                 match &args[0] {
                     Value::Array(arr) => {
-                        match arr.borrow_mut().pop() {
+                        match arr.lock().unwrap().pop() {
                             Some(val) => return Ok(val),
                             None => return Err(format!("Hata [{}:{}]: Boş diziden 'pop' yapılamaz", span.line, span.col)),
                         }
@@ -505,7 +608,7 @@ impl Interpreter {
             }
             "env::args" => {
                 let args_vec: Vec<Value> = std::env::args().map(Value::Str).collect();
-                return Ok(Value::Array(Rc::new(RefCell::new(args_vec))));
+                return Ok(Value::Array(shared(args_vec)));
             }
             "env::var" => {
                 if args.len() != 1 {
@@ -663,7 +766,7 @@ impl Interpreter {
                 if args.len() == 2 {
                     if let (Value::Str(s), Value::Str(sep)) = (&args[0], &args[1]) {
                         let parts: Vec<Value> = s.split(sep).map(|p| Value::Str(p.to_string())).collect();
-                        return Ok(Value::Array(Rc::new(RefCell::new(parts))));
+                        return Ok(Value::Array(shared(parts)));
                     }
                 }
                 return Err(format!("Hata [{}:{}]: 'split' (str, str) bekler", span.line, span.col));
@@ -692,7 +795,7 @@ impl Interpreter {
             }
             "args" => {
                 let cli_args: Vec<Value> = std::env::args().map(Value::Str).collect();
-                return Ok(Value::Array(Rc::new(RefCell::new(cli_args))));
+                return Ok(Value::Array(shared(cli_args)));
             }
             "get_env" => {
                 if let Some(Value::Str(key)) = args.first() {
@@ -707,7 +810,7 @@ impl Interpreter {
                 std::process::exit(0);
             }
             "map_new" => {
-                return Ok(Value::Map(Rc::new(RefCell::new(HashMap::new()))));
+                return Ok(Value::Map(shared(HashMap::new())));
             }
             "map_set" => {
                 if args.len() == 3 {
@@ -716,7 +819,7 @@ impl Interpreter {
                             Value::Str(s) => s.clone(),
                             other => other.to_string(),
                         };
-                        m.borrow_mut().insert(k, args[2].clone());
+                        m.lock().unwrap().insert(k, args[2].clone());
                         return Ok(Value::Void);
                     }
                 }
@@ -729,7 +832,7 @@ impl Interpreter {
                             Value::Str(s) => s.clone(),
                             other => other.to_string(),
                         };
-                        return Ok(m.borrow().get(&k).cloned().unwrap_or(Value::Str(String::new())));
+                        return Ok(m.lock().unwrap().get(&k).cloned().unwrap_or(Value::Str(String::new())));
                     }
                 }
                 return Err(format!("Hata [{}:{}]: 'map_get' (map, anahtar) bekler", span.line, span.col));
@@ -741,21 +844,21 @@ impl Interpreter {
                             Value::Str(s) => s.clone(),
                             other => other.to_string(),
                         };
-                        return Ok(Value::Bool(m.borrow().contains_key(&k)));
+                        return Ok(Value::Bool(m.lock().unwrap().contains_key(&k)));
                     }
                 }
                 return Err(format!("Hata [{}:{}]: 'map_has' (map, anahtar) bekler", span.line, span.col));
             }
             "map_len" => {
                 if let Some(Value::Map(m)) = args.first() {
-                    return Ok(Value::Int(m.borrow().len() as i64));
+                    return Ok(Value::Int(m.lock().unwrap().len() as i64));
                 }
                 return Err(format!("Hata [{}:{}]: 'map_len' Map bekler", span.line, span.col));
             }
             "map_keys" => {
                 if let Some(Value::Map(m)) = args.first() {
-                    let keys: Vec<Value> = m.borrow().keys().cloned().map(Value::Str).collect();
-                    return Ok(Value::Array(Rc::new(RefCell::new(keys))));
+                    let keys: Vec<Value> = m.lock().unwrap().keys().cloned().map(Value::Str).collect();
+                    return Ok(Value::Array(shared(keys)));
                 }
                 return Err(format!("Hata [{}:{}]: 'map_keys' Map bekler", span.line, span.col));
             }
@@ -788,7 +891,7 @@ impl Interpreter {
         for (param, arg_val) in func.params.iter().zip(args.into_iter()) {
             let passed_val = match (&param.ty, arg_val) {
                 (Type::Slice(..), Value::Array(arr)) => {
-                    let total_len = arr.borrow().len();
+                    let total_len = arr.lock().unwrap().len();
                     Value::Slice {
                         target: arr,
                         start: 0,
@@ -798,7 +901,7 @@ impl Interpreter {
                 (Type::StrSlice, Value::Str(s)) => {
                     let total_len = s.len();
                     Value::StrSlice {
-                        target: Rc::new(s),
+                        target: Arc::new(s),
                         start: 0,
                         len: total_len,
                     }
@@ -913,7 +1016,7 @@ impl Interpreter {
                     val = Value::U8(*i as u8);
                 }
                 if let (Some(Type::Slice(..)), Value::Array(arr)) = (ty, &val) {
-                    let total_len = arr.borrow().len();
+                    let total_len = arr.lock().unwrap().len();
                     val = Value::Slice {
                         target: arr.clone(),
                         start: 0,
@@ -923,7 +1026,7 @@ impl Interpreter {
                 if let (Some(Type::StrSlice), Value::Str(s)) = (ty, &val) {
                     let total_len = s.len();
                     val = Value::StrSlice {
-                        target: Rc::new(s.clone()),
+                        target: Arc::new(s.clone()),
                         start: 0,
                         len: total_len,
                     };
@@ -952,7 +1055,7 @@ impl Interpreter {
                 };
                 match init_val {
                     Value::Tuple(tuple_elems) => {
-                        let borrowed = tuple_elems.borrow();
+                        let borrowed = tuple_elems.lock().unwrap();
                         for (i, (name, is_mut)) in elements.iter().enumerate() {
                             if name != "_" {
                                 let v = borrowed.get(i).cloned().unwrap_or(Value::Void);
@@ -1007,9 +1110,9 @@ impl Interpreter {
             Stmt::ForIn { var_name, iterable, body, span } => {
                 let iter_val = self.eval_expr(iterable)?;
                 let items: Vec<Value> = match iter_val {
-                    Value::Array(arr) => arr.borrow().clone(),
+                    Value::Array(arr) => arr.lock().unwrap().clone(),
                     Value::Slice { target, start, len } => {
-                        let inner = target.borrow();
+                        let inner = target.lock().unwrap();
                         inner[start..start + len].to_vec()
                     }
                     Value::Str(s) => s.chars().map(|c| Value::Str(c.to_string())).collect(),
@@ -1335,7 +1438,7 @@ impl Interpreter {
                 for e in elements {
                     evaluated.push(self.eval_expr(e)?);
                 }
-                Ok(Value::Array(Rc::new(RefCell::new(evaluated))))
+                Ok(Value::Array(shared(evaluated)))
             }
             Expr::Index { target, index, span } => {
                 let target_val = self.eval_expr(target)?;
@@ -1354,7 +1457,7 @@ impl Interpreter {
 
                 match target_val {
                     Value::Array(arr) => {
-                        let inner = arr.borrow();
+                        let inner = arr.lock().unwrap();
                         if idx < 0 || idx as usize >= inner.len() {
                             return Err(format!(
                                 "Hata [{}:{}]: Dizi sınır aşımı! Boyut: {}, Erişilmek istenen indeks: {}",
@@ -1364,7 +1467,7 @@ impl Interpreter {
                         Ok(inner[idx as usize].clone())
                     }
                     Value::Slice { target, start, len } => {
-                        let inner = target.borrow();
+                        let inner = target.lock().unwrap();
                         if idx < 0 || idx as usize >= len {
                             return Err(format!(
                                 "Hata [{}:{}]: Dilim sınır aşımı! Boyut: {}, Erişilmek istenen indeks: {}",
@@ -1409,7 +1512,7 @@ impl Interpreter {
 
                 match target_val {
                     Value::Array(arr) => {
-                        let total_len = arr.borrow().len() as i64;
+                        let total_len = arr.lock().unwrap().len() as i64;
                         let end_idx = if let Some(e) = end {
                             match self.eval_expr(e)? {
                                 Value::Int(i) => i,
@@ -1475,7 +1578,7 @@ impl Interpreter {
                         }
 
                         Ok(Value::StrSlice {
-                            target: Rc::new(s),
+                            target: Arc::new(s),
                             start: start_idx as usize,
                             len: (end_idx - start_idx) as usize,
                         })
@@ -1535,7 +1638,7 @@ impl Interpreter {
 
                 match target_val {
                     Value::Array(arr) => {
-                        let mut inner = arr.borrow_mut();
+                        let mut inner = arr.lock().unwrap();
                         if idx < 0 || idx as usize >= inner.len() {
                             return Err(format!(
                                 "Hata [{}:{}]: Dizi sınır aşımı! Boyut: {}, Atanmak istenen indeks: {}",
@@ -1553,13 +1656,13 @@ impl Interpreter {
                 for e in elements {
                     values.push(self.eval_expr(e)?);
                 }
-                Ok(Value::Tuple(Rc::new(RefCell::new(values))))
+                Ok(Value::Tuple(shared(values)))
             }
             Expr::TupleIndex { target, index, span } => {
                 let target_val = self.eval_expr(target)?;
                 match target_val {
                     Value::Tuple(tuple_elems) => {
-                        let inner = tuple_elems.borrow();
+                        let inner = tuple_elems.lock().unwrap();
                         if *index < inner.len() {
                             Ok(inner[*index].clone())
                         } else {
@@ -1587,7 +1690,7 @@ impl Interpreter {
 
                 match target_val {
                     Value::Tuple(tuple_elems) => {
-                        let mut inner = tuple_elems.borrow_mut();
+                        let mut inner = tuple_elems.lock().unwrap();
                         if *index < inner.len() {
                             inner[*index] = new_val.clone();
                             Ok(new_val)
@@ -1614,18 +1717,18 @@ impl Interpreter {
 
                 Ok(Value::Struct {
                     name: name.clone(),
-                    fields: Rc::new(RefCell::new(field_map)),
+                    fields: shared(field_map),
                 })
             }
             Expr::FieldAccess { target, field, span } => {
                 let mut target_val = self.eval_expr(target)?;
                 while let Value::Box(inner) | Value::Rc(inner, _) | Value::RefCell(inner) = target_val {
-                    let next = inner.borrow().clone();
+                    let next = inner.lock().unwrap().clone();
                     target_val = next;
                 }
                 match target_val {
                     Value::Struct { ref name, ref fields } => {
-                        let inner = fields.borrow();
+                        let inner = fields.lock().unwrap();
                         match inner.get(field) {
                             Some(val) => Ok(val.clone()),
                             None => Err(format!("Hata [{}:{}]: '{}' struct'ında '{}' adında bir alan bulunamadı", span.line, span.col, name, field)),
@@ -1652,18 +1755,18 @@ impl Interpreter {
                 loop {
                     match current {
                         Value::Box(inner) | Value::RefCell(inner) => {
-                            let is_struct = matches!(&*inner.borrow(), Value::Struct { .. });
+                            let is_struct = matches!(&*inner.lock().unwrap(), Value::Struct { .. });
                             if is_struct {
-                                if let Value::Struct { fields, .. } = &*inner.borrow() {
-                                    fields.borrow_mut().insert(field.clone(), new_val.clone());
+                                if let Value::Struct { fields, .. } = &*inner.lock().unwrap() {
+                                    fields.lock().unwrap().insert(field.clone(), new_val.clone());
                                     return Ok(new_val);
                                 }
                             }
-                            let next = inner.borrow().clone();
+                            let next = inner.lock().unwrap().clone();
                             current = next;
                         }
                         Value::Struct { ref name, ref fields } => {
-                            let mut inner = fields.borrow_mut();
+                            let mut inner = fields.lock().unwrap();
                             if !inner.contains_key(field) {
                                 return Err(format!("Hata [{}:{}]: '{}' struct'ında '{}' alanı bulunmuyor", span.line, span.col, name, field));
                             }
@@ -1748,7 +1851,7 @@ impl Interpreter {
                                 let sep = self.eval_expr(&args[0])?;
                                 let sep_str = match sep { Value::Str(v) => v, other => other.to_string() };
                                 let parts: Vec<Value> = s.split(&sep_str).map(|p| Value::Str(p.to_string())).collect();
-                                return Ok(Value::Array(Rc::new(RefCell::new(parts))));
+                                return Ok(Value::Array(shared(parts)));
                             }
                             "replace" => {
                                 if args.len() != 2 { return Err(format!("Hata [{}:{}]: 'replace()' 2 argüman bekler", span.line, span.col)); }
@@ -1775,17 +1878,17 @@ impl Interpreter {
                         match method.as_str() {
                             "len" => {
                                 if !args.is_empty() { return Err(format!("Hata [{}:{}]: 'len()' argüman almaz", span.line, span.col)); }
-                                return Ok(Value::Int(arr.borrow().len() as i64));
+                                return Ok(Value::Int(arr.lock().unwrap().len() as i64));
                             }
                             "push" => {
                                 if args.len() != 1 { return Err(format!("Hata [{}:{}]: 'push()' 1 argüman bekler", span.line, span.col)); }
                                 let val = self.eval_expr(&args[0])?;
-                                arr.borrow_mut().push(val);
+                                arr.lock().unwrap().push(val);
                                 return Ok(Value::Void);
                             }
                             "pop" => {
                                 if !args.is_empty() { return Err(format!("Hata [{}:{}]: 'pop()' argüman almaz", span.line, span.col)); }
-                                match arr.borrow_mut().pop() {
+                                match arr.lock().unwrap().pop() {
                                     Some(v) => return Ok(v),
                                     None => return Err(format!("Hata [{}:{}]: Boş diziden 'pop' yapılamaz", span.line, span.col)),
                                 }
@@ -1797,7 +1900,7 @@ impl Interpreter {
                                     Value::Closure { params, body, env } => (params, body, env),
                                     _ => return Err(format!("Hata [{}:{}]: 'map()' closure bekler", span.line, span.col)),
                                 };
-                                let elements = arr.borrow().clone();
+                                let elements = arr.lock().unwrap().clone();
                                 let mut result = Vec::new();
                                 for elem in elements {
                                     let prev_env = std::mem::replace(&mut self.env, captured_env.clone());
@@ -1813,7 +1916,7 @@ impl Interpreter {
                                     self.env = prev_env;
                                     result.push(mapped);
                                 }
-                                return Ok(Value::Array(Rc::new(RefCell::new(result))));
+                                return Ok(Value::Array(shared(result)));
                             }
                             "filter" => {
                                 if args.len() != 1 { return Err(format!("Hata [{}:{}]: 'filter()' 1 closure argümanı bekler", span.line, span.col)); }
@@ -1822,7 +1925,7 @@ impl Interpreter {
                                     Value::Closure { params, body, env } => (params, body, env),
                                     _ => return Err(format!("Hata [{}:{}]: 'filter()' closure bekler", span.line, span.col)),
                                 };
-                                let elements = arr.borrow().clone();
+                                let elements = arr.lock().unwrap().clone();
                                 let mut result = Vec::new();
                                 for elem in elements {
                                     let prev_env = std::mem::replace(&mut self.env, captured_env.clone());
@@ -1840,7 +1943,7 @@ impl Interpreter {
                                         result.push(elem);
                                     }
                                 }
-                                return Ok(Value::Array(Rc::new(RefCell::new(result))));
+                                return Ok(Value::Array(shared(result)));
                             }
                             _ => return Err(format!("Hata [{}:{}]: Dizi için '{}' metodu bulunamadı", span.line, span.col, method)),
                         }
@@ -1854,9 +1957,9 @@ impl Interpreter {
                             }
                             "to_array" | "to_vec" => {
                                 if !args.is_empty() { return Err(format!("Hata [{}:{}]: 'to_array()' argüman almaz", span.line, span.col)); }
-                                let inner = target.borrow();
+                                let inner = target.lock().unwrap();
                                 let cloned = inner[start..start + len].to_vec();
-                                return Ok(Value::Array(Rc::new(RefCell::new(cloned))));
+                                return Ok(Value::Array(shared(cloned)));
                             }
                             _ => return Err(format!("Hata [{}:{}]: Dilim için '{}' metodu bulunamadı", span.line, span.col, method)),
                         }
@@ -1908,49 +2011,81 @@ impl Interpreter {
                                 let k = self.eval_expr(&args[0])?;
                                 let v = self.eval_expr(&args[1])?;
                                 let k_str = match k { Value::Str(s) => s, other => other.to_string() };
-                                m.borrow_mut().insert(k_str, v);
+                                m.lock().unwrap().insert(k_str, v);
                                 return Ok(Value::Void);
                             }
                             "get" => {
                                 if args.len() != 1 { return Err(format!("Hata [{}:{}]: 'Map.get()' 1 argüman bekler", span.line, span.col)); }
                                 let k = self.eval_expr(&args[0])?;
                                 let k_str = match k { Value::Str(s) => s, other => other.to_string() };
-                                return Ok(m.borrow().get(&k_str).cloned().unwrap_or(Value::Str(String::new())));
+                                return Ok(m.lock().unwrap().get(&k_str).cloned().unwrap_or(Value::Str(String::new())));
                             }
                             "has" => {
                                 if args.len() != 1 { return Err(format!("Hata [{}:{}]: 'Map.has()' 1 argüman bekler", span.line, span.col)); }
                                 let k = self.eval_expr(&args[0])?;
                                 let k_str = match k { Value::Str(s) => s, other => other.to_string() };
-                                return Ok(Value::Bool(m.borrow().contains_key(&k_str)));
+                                return Ok(Value::Bool(m.lock().unwrap().contains_key(&k_str)));
                             }
                             "len" => {
                                 if !args.is_empty() { return Err(format!("Hata [{}:{}]: 'Map.len()' argüman almaz", span.line, span.col)); }
-                                return Ok(Value::Int(m.borrow().len() as i64));
+                                return Ok(Value::Int(m.lock().unwrap().len() as i64));
                             }
                             "keys" => {
                                 if !args.is_empty() { return Err(format!("Hata [{}:{}]: 'Map.keys()' argüman almaz", span.line, span.col)); }
-                                let keys: Vec<Value> = m.borrow().keys().cloned().map(Value::Str).collect();
-                                return Ok(Value::Array(Rc::new(RefCell::new(keys))));
+                                let keys: Vec<Value> = m.lock().unwrap().keys().cloned().map(Value::Str).collect();
+                                return Ok(Value::Array(shared(keys)));
                             }
                             _ => return Err(format!("Hata [{}:{}]: 'Map' için '{}' metodu bulunamadı", span.line, span.col, method)),
                         }
                     }
+                    Value::JoinHandle(handle_arc) if method == "join" => {
+                        let mut lock = handle_arc.lock().map_err(|e| e.to_string())?;
+                        if let Some(h) = lock.take() {
+                            match h.join() {
+                                Ok(res) => match res {
+                                    Ok(v) => Ok(Value::Ok(Box::new(v))),
+                                    Err(e) => Ok(Value::Err(Box::new(Value::Str(e)))),
+                                },
+                                Err(_) => Ok(Value::Err(Box::new(Value::Str("Thread çöktü (panicked)".to_string())))),
+                            }
+                        } else {
+                            Ok(Value::Err(Box::new(Value::Str("Thread zaten join edildi".to_string()))))
+                        }
+                    }
+                    Value::Sender(tx) if method == "send" => {
+                        if args.len() != 1 { return Err(format!("Hata [{}:{}]: 'send()' 1 argüman bekler", span.line, span.col)); }
+                        let val = self.eval_expr(&args[0])?;
+                        match tx.send(val) {
+                            Ok(_) => Ok(Value::Ok(Box::new(Value::Void))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                        }
+                    }
+                    Value::Receiver(rx_arc) if method == "recv" => {
+                        let lock = rx_arc.lock().map_err(|e| e.to_string())?;
+                        match lock.recv() {
+                            Ok(val) => Ok(Value::Ok(Box::new(val))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                        }
+                    }
+                    Value::Mutex(m_arc) if method == "lock" => {
+                        Ok(Value::Ref { val: Arc::clone(m_arc), is_mut: true })
+                    }
                     Value::Rc(inner, count) if method == "clone" => {
-                        *count.borrow_mut() += 1;
-                        Ok(Value::Rc(Rc::clone(inner), Rc::clone(count)))
+                        *count.lock().unwrap() += 1;
+                        Ok(Value::Rc(Arc::clone(inner), Arc::clone(count)))
                     }
                     Value::RefCell(inner) if method == "borrow" => {
-                        Ok(Value::Ref { val: Rc::clone(inner), is_mut: false })
+                        Ok(Value::Ref { val: Arc::clone(inner), is_mut: false })
                     }
                     Value::RefCell(inner) if method == "borrow_mut" => {
-                        Ok(Value::Ref { val: Rc::clone(inner), is_mut: true })
+                        Ok(Value::Ref { val: Arc::clone(inner), is_mut: true })
                     }
                     Value::Box(inner) | Value::Rc(inner, _) => {
                         let mut evaluated_args = Vec::new();
                         for a in args {
                             evaluated_args.push(self.eval_expr(a)?);
                         }
-                        let deref_struct = inner.borrow().clone();
+                        let deref_struct = inner.lock().unwrap().clone();
                         self.call_struct_method(&deref_struct, method, evaluated_args, *span)
                     }
                     Value::Struct { .. } => {
@@ -2026,7 +2161,7 @@ impl Interpreter {
             Expr::Borrow { expr, is_mut, .. } => {
                 let inner_val = self.eval_expr(expr)?;
                 Ok(Value::Ref {
-                    val: Rc::new(RefCell::new(inner_val)),
+                    val: shared(inner_val),
                     is_mut: *is_mut,
                 })
             }
@@ -2034,11 +2169,11 @@ impl Interpreter {
                 let v = self.eval_expr(expr)?;
                 match v {
                     Value::Box(inner) | Value::Rc(inner, _) | Value::RefCell(inner) => {
-                        let cloned = inner.borrow().clone();
+                        let cloned = inner.lock().unwrap().clone();
                         Ok(cloned)
                     }
                     Value::Ref { val, .. } => {
-                        let cloned = val.borrow().clone();
+                        let cloned = val.lock().unwrap().clone();
                         Ok(cloned)
                     }
                     _ => Err(format!("Hata [{}:{}]: '*' operatörü yalnızca referanslar veya akıllı işaretçiler (Box, Rc) üzerinde kullanılabilir", span.line, span.col)),
@@ -2049,14 +2184,14 @@ impl Interpreter {
                 let tgt = self.eval_expr(target)?;
                 match tgt {
                     Value::Box(inner) | Value::RefCell(inner) => {
-                        *inner.borrow_mut() = val.clone();
+                        *inner.lock().unwrap() = val.clone();
                         Ok(val)
                     }
                     Value::Ref { val: r_val, is_mut } => {
                         if !is_mut {
                             return Err(format!("Hata [{}:{}]: Değiştirilemez (&) referans üzerinden atama yapılamaz", span.line, span.col));
                         }
-                        *r_val.borrow_mut() = val.clone();
+                        *r_val.lock().unwrap() = val.clone();
                         Ok(val)
                     }
                     _ => Err(format!("Hata [{}:{}]: '*' operatörü ile atama yalnızca değiştirilebilir referanslar veya Box üzerinde yapılabilir", span.line, span.col)),
@@ -2153,7 +2288,7 @@ impl Interpreter {
             }
             Pattern::Tuple(pats, _) => {
                 if let Value::Tuple(elems) = subject_val {
-                    let inner = elems.borrow();
+                    let inner = elems.lock().unwrap();
                     if pats.len() == inner.len() {
                         let mut bindings = Vec::new();
                         for (p, v) in pats.iter().zip(inner.iter()) {

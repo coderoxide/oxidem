@@ -161,6 +161,13 @@ impl CodegenC {
                     "env::args" => Type::Array(Box::new(Type::Str)),
                     "env::var" => Type::Option(Box::new(Type::Str)),
                     "env::current_dir" | "current_dir" => Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+                    "thread::spawn" => Type::JoinHandle(Box::new(Type::Void)),
+                    "thread::sleep" => Type::Void,
+                    "channel" => Type::Tuple(vec![Type::Sender(Box::new(Type::Void)), Type::Receiver(Box::new(Type::Void))]),
+                    "Mutex::new" => {
+                        let inner = if let Some(arg) = args.first() { self.infer_expr_type(arg) } else { Type::Void };
+                        Type::Mutex(Box::new(inner))
+                    }
                     _ => self.fn_ret_types.get(callee).cloned().unwrap_or(Type::Void),
                 }
             }
@@ -187,6 +194,13 @@ impl CodegenC {
                     if let Type::Rc(inner) = target_ty {
                         return Type::Rc(inner);
                     }
+                }
+                match &target_ty {
+                    Type::JoinHandle(inner) if method == "join" => return Type::Result(inner.clone(), Box::new(Type::Str)),
+                    Type::Sender(_) if method == "send" => return Type::Result(Box::new(Type::Void), Box::new(Type::Str)),
+                    Type::Receiver(inner) if method == "recv" => return Type::Result(inner.clone(), Box::new(Type::Str)),
+                    Type::Mutex(inner) if method == "lock" => return Type::Ref { inner: inner.clone(), is_mut: true },
+                    _ => {}
                 }
                 let mut curr_target = target_ty;
                 while let Type::Box(in_t) | Type::Rc(in_t) | Type::RefCell(in_t) = curr_target {
@@ -309,7 +323,8 @@ impl CodegenC {
                     self.tuples.push(elem_tys.clone());
                 }
             }
-            Type::Array(inner) | Type::Slice(inner) | Type::Option(inner) | Type::Ref { inner, .. } | Type::RawPtr { inner, .. } => {
+            Type::Array(inner) | Type::Slice(inner) | Type::Option(inner) | Type::Ref { inner, .. } | Type::RawPtr { inner, .. }
+            | Type::Box(inner) | Type::Rc(inner) | Type::RefCell(inner) | Type::JoinHandle(inner) | Type::Sender(inner) | Type::Receiver(inner) | Type::Mutex(inner) => {
                 self.collect_tuples_from_type(inner);
             }
             Type::Result(ok, err) => {
@@ -358,7 +373,16 @@ impl CodegenC {
                 self.collect_tuples_from_expr(target);
                 self.collect_tuples_from_expr(value);
             }
-            Expr::Call { args, .. } => {
+            Expr::Call { callee, args, .. } => {
+                if callee == "channel" {
+                    let chan_tuple = vec![
+                        Type::Sender(Box::new(Type::Void)),
+                        Type::Receiver(Box::new(Type::Void)),
+                    ];
+                    if !self.tuples.iter().any(|existing| existing == &chan_tuple) {
+                        self.tuples.push(chan_tuple);
+                    }
+                }
                 for a in args {
                     self.collect_tuples_from_expr(a);
                 }
@@ -517,6 +541,10 @@ impl CodegenC {
                 let inner_c = self.to_c_type(inner);
                 format!("{}*", inner_c)
             }
+            Type::JoinHandle(_) => "_OxJoinHandle*".to_string(),
+            Type::Sender(_) => "_OxSender*".to_string(),
+            Type::Receiver(_) => "_OxReceiver*".to_string(),
+            Type::Mutex(_) => "_OxMutex*".to_string(),
             Type::Generic { name, type_args } => {
                 let args_str = type_args.iter().map(|a| match a {
                     Type::Int => "int".to_string(),
@@ -586,6 +614,8 @@ impl CodegenC {
         self.write_line("#include <math.h>");
         self.write_line("#include <unistd.h>");
         self.write_line("#include <sys/stat.h>");
+        self.write_line("#include <pthread.h>");
+        self.write_line("#include <time.h>");
         self.write_line("");
 
         // Runtime helpers
@@ -645,6 +675,7 @@ impl CodegenC {
         self.write_line("    return buf;");
         self.write_line("}");
         self.write_line("static inline char* _ox_to_str_str(const char* x) { return (char*)(x ? x : \"\"); }");
+        self.write_line("static inline char* _ox_to_str_ptr(const void* x) { char* buf = _ox_arena_alloc(32); snprintf(buf, 32, \"%p\", x); return buf; }");
         self.write_line("");
         self.write_line("typedef struct {");
         self.write_line("    int64_t len;");
@@ -1221,17 +1252,54 @@ impl CodegenC {
         self.write_line("    return a;");
         self.write_line("}");
         self.write_line("");
+        self.write_line("/* Concurrency & Multi-Threading Runtime Types */");
+        self.write_line("typedef struct {");
+        self.write_line("    pthread_t thread;");
+        self.write_line("    void* result;");
+        self.write_line("    bool joined;");
+        self.write_line("} _OxJoinHandle;");
+        self.write_line("");
+        self.write_line("typedef struct {");
+        self.write_line("    pthread_mutex_t lock;");
+        self.write_line("    int64_t data;");
+        self.write_line("} _OxMutex;");
+        self.write_line("");
+        self.write_line("typedef struct _OxChanNode {");
+        self.write_line("    int64_t val;");
+        self.write_line("    struct _OxChanNode* next;");
+        self.write_line("} _OxChanNode;");
+        self.write_line("");
+        self.write_line("typedef struct {");
+        self.write_line("    pthread_mutex_t lock;");
+        self.write_line("    pthread_cond_t cond;");
+        self.write_line("    _OxChanNode* head;");
+        self.write_line("    _OxChanNode* tail;");
+        self.write_line("    bool closed;");
+        self.write_line("} _OxChanShared;");
+        self.write_line("");
+        self.write_line("typedef struct {");
+        self.write_line("    _OxChanShared* shared;");
+        self.write_line("} _OxSender;");
+        self.write_line("");
+        self.write_line("typedef struct {");
+        self.write_line("    _OxChanShared* shared;");
+        self.write_line("} _OxReceiver;");
+        self.write_line("");
+        self.write_line("typedef struct { _OxSender* _0; _OxReceiver* _1; } _OxTuple_Sender__void_Receiver__void;");
+        self.write_line("");
 
         // Tuple type declarations
         for tuple_tys in &self.tuples.clone() {
             let tuple_name = self.c_tuple_name(tuple_tys);
-            self.write_line(&format!("typedef struct {{"));
-            self.indent += 1;
-            for (idx, elem_t) in tuple_tys.iter().enumerate() {
-                self.write_line(&format!("{} _{};", self.to_c_type(elem_t), idx));
+            if tuple_name != "_OxTuple_Sender__void_Receiver__void" {
+                self.write_line(&format!("typedef struct {{"));
+                self.indent += 1;
+                for (idx, elem_t) in tuple_tys.iter().enumerate() {
+                    self.write_line(&format!("{} _{};", self.to_c_type(elem_t), idx));
+                }
+                self.indent -= 1;
+                self.write_line(&format!("}} {};", tuple_name));
             }
-            self.indent -= 1;
-            self.write_line(&format!("}} {};", tuple_name));
             self.write_line(&format!("static inline void _ox_print_{}({} t);", tuple_name, tuple_name));
             self.write_line(&format!("static inline char* _ox_to_str_{}({} t);", tuple_name, tuple_name));
         }
@@ -1300,7 +1368,7 @@ impl CodegenC {
         self.write_line("    char*: _ox_to_str_str, \\");
         self.write_line("    const char*: _ox_to_str_str, \\");
         self.write_line("    _OxMap*: _ox_to_str_map, \\");
-        self.write_line("    default: _ox_to_str_str \\");
+        self.write_line("    default: _ox_to_str_ptr \\");
         self.write_line(")(x)");
         self.write_line("");
 
@@ -1320,6 +1388,122 @@ impl CodegenC {
         }
         self.write_line("");
         self.write_line("#define _ox_add_str(a, b) _ox_str_concat(_ox_to_str(a), _ox_to_str(b))");
+        self.write_line("");
+        self.write_line("/* Concurrency Functions */");
+        self.write_line("typedef struct {");
+        self.write_line("    void* (*fn)(void*);");
+        self.write_line("    void* arg;");
+        self.write_line("} _OxThreadArg;");
+        self.write_line("");
+        self.write_line("static inline void* _ox_thread_trampoline(void* raw_arg) {");
+        self.write_line("    _OxThreadArg* targ = (_OxThreadArg*)raw_arg;");
+        self.write_line("    void* (*fn)(void*) = targ->fn;");
+        self.write_line("    void* arg = targ->arg;");
+        self.write_line("    free(targ);");
+        self.write_line("    return fn(arg);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxJoinHandle* _ox_thread_spawn(void* fn) {");
+        self.write_line("    _OxJoinHandle* h = (_OxJoinHandle*)malloc(sizeof(_OxJoinHandle));");
+        self.write_line("    h->joined = false;");
+        self.write_line("    h->result = NULL;");
+        self.write_line("    _OxThreadArg* targ = (_OxThreadArg*)malloc(sizeof(_OxThreadArg));");
+        self.write_line("    targ->fn = (void* (*)(void*))fn;");
+        self.write_line("    targ->arg = NULL;");
+        self.write_line("    pthread_create(&h->thread, NULL, _ox_thread_trampoline, targ);");
+        self.write_line("    return h;");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxResult _ox_thread_join(_OxJoinHandle* h) {");
+        self.write_line("    if (!h) return _ox_err((int64_t)(uintptr_t)\"Null thread handle\");");
+        self.write_line("    if (h->joined) return _ox_err((int64_t)(uintptr_t)\"Thread zaten join edildi\");");
+        self.write_line("    pthread_join(h->thread, &h->result);");
+        self.write_line("    h->joined = true;");
+        self.write_line("    return _ox_ok((int64_t)(uintptr_t)h->result);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline void _ox_thread_sleep(int64_t ms) {");
+        self.write_line("    if (ms <= 0) return;");
+        self.write_line("    struct timespec ts;");
+        self.write_line("    ts.tv_sec = ms / 1000;");
+        self.write_line("    ts.tv_nsec = (ms % 1000) * 1000000;");
+        self.write_line("    nanosleep(&ts, NULL);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxMutex* _ox_mutex_new(int64_t val) {");
+        self.write_line("    _OxMutex* m = (_OxMutex*)malloc(sizeof(_OxMutex));");
+        self.write_line("    pthread_mutexattr_t attr;");
+        self.write_line("    pthread_mutexattr_init(&attr);");
+        self.write_line("    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);");
+        self.write_line("    pthread_mutex_init(&m->lock, &attr);");
+        self.write_line("    pthread_mutexattr_destroy(&attr);");
+        self.write_line("    m->data = val;");
+        self.write_line("    return m;");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline void* _ox_mutex_lock(_OxMutex* m) {");
+        self.write_line("    if (!m) return NULL;");
+        self.write_line("    pthread_mutex_lock(&m->lock);");
+        self.write_line("    return (void*)&m->data;");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline void _ox_mutex_unlock(_OxMutex* m) {");
+        self.write_line("    if (!m) return;");
+        self.write_line("    pthread_mutex_unlock(&m->lock);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxResult _ox_chan_send(_OxSender* tx, int64_t val) {");
+        self.write_line("    if (!tx || !tx->shared) return _ox_err((int64_t)(uintptr_t)\"Kanal gecersiz\");");
+        self.write_line("    pthread_mutex_lock(&tx->shared->lock);");
+        self.write_line("    _OxChanNode* node = (_OxChanNode*)malloc(sizeof(_OxChanNode));");
+        self.write_line("    node->val = val;");
+        self.write_line("    node->next = NULL;");
+        self.write_line("    if (tx->shared->tail) {");
+        self.write_line("        tx->shared->tail->next = node;");
+        self.write_line("        tx->shared->tail = node;");
+        self.write_line("    } else {");
+        self.write_line("        tx->shared->head = node;");
+        self.write_line("        tx->shared->tail = node;");
+        self.write_line("    }");
+        self.write_line("    pthread_cond_signal(&tx->shared->cond);");
+        self.write_line("    pthread_mutex_unlock(&tx->shared->lock);");
+        self.write_line("    return _ox_ok(0);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxResult _ox_chan_recv(_OxReceiver* rx) {");
+        self.write_line("    if (!rx || !rx->shared) return _ox_err((int64_t)(uintptr_t)\"Kanal gecersiz\");");
+        self.write_line("    pthread_mutex_lock(&rx->shared->lock);");
+        self.write_line("    while (rx->shared->head == NULL && !rx->shared->closed) {");
+        self.write_line("        pthread_cond_wait(&rx->shared->cond, &rx->shared->lock);");
+        self.write_line("    }");
+        self.write_line("    if (rx->shared->head == NULL) {");
+        self.write_line("        pthread_mutex_unlock(&rx->shared->lock);");
+        self.write_line("        return _ox_err((int64_t)(uintptr_t)\"Kanal bos ve kapali\");");
+        self.write_line("    }");
+        self.write_line("    _OxChanNode* node = rx->shared->head;");
+        self.write_line("    int64_t val = node->val;");
+        self.write_line("    rx->shared->head = node->next;");
+        self.write_line("    if (rx->shared->head == NULL) {");
+        self.write_line("        rx->shared->tail = NULL;");
+        self.write_line("    }");
+        self.write_line("    free(node);");
+        self.write_line("    pthread_mutex_unlock(&rx->shared->lock);");
+        self.write_line("    return _ox_ok(val);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxTuple_Sender__void_Receiver__void _ox_channel_create(void) {");
+        self.write_line("    _OxChanShared* s = (_OxChanShared*)malloc(sizeof(_OxChanShared));");
+        self.write_line("    pthread_mutex_init(&s->lock, NULL);");
+        self.write_line("    pthread_cond_init(&s->cond, NULL);");
+        self.write_line("    s->head = NULL;");
+        self.write_line("    s->tail = NULL;");
+        self.write_line("    s->closed = false;");
+        self.write_line("    _OxSender* tx = (_OxSender*)malloc(sizeof(_OxSender));");
+        self.write_line("    tx->shared = s;");
+        self.write_line("    _OxReceiver* rx = (_OxReceiver*)malloc(sizeof(_OxReceiver));");
+        self.write_line("    rx->shared = s;");
+        self.write_line("    return (_OxTuple_Sender__void_Receiver__void){ ._0 = tx, ._1 = rx };");
+        self.write_line("}");
         self.write_line("");
 
         // Enums definition
@@ -2018,6 +2202,17 @@ impl CodegenC {
                     "is_err" => format!("((bool)!({}).is_ok)", t),
                     "clone" if matches!(target_ty, Type::Rc(_)) => format!("_ox_rc_clone({})", t),
                     "borrow" | "borrow_mut" if matches!(target_ty, Type::RefCell(_)) => t,
+                    "join" if matches!(target_ty, Type::JoinHandle(_)) => format!("_ox_thread_join({})", t),
+                    "send" if matches!(target_ty, Type::Sender(_)) => format!("_ox_chan_send({}, (int64_t)({}))", t, self.compile_expr(&args[0])),
+                    "recv" if matches!(target_ty, Type::Receiver(_)) => format!("_ox_chan_recv({})", t),
+                    "lock" if matches!(target_ty, Type::Mutex(_)) => {
+                        let inner_c = if let Type::Mutex(ref in_t) = target_ty {
+                            self.to_c_type(in_t)
+                        } else {
+                            "int64_t".to_string()
+                        };
+                        format!("(({}*)_ox_mutex_lock({}))", inner_c, t)
+                    }
                     "unwrap" => {
                         let inner_ty = match target_ty {
                             Type::Option(ref in_t) => Some((**in_t).clone()),
@@ -2139,6 +2334,18 @@ impl CodegenC {
                     "fs::remove_file" | "remove_file" => format!("_ox_fs_remove_file({})", self.compile_expr(&args[0])),
                     "fs::exists" | "file_exists" => format!("_ox_fs_exists({})", self.compile_expr(&args[0])),
                     "fs::create_dir" | "create_dir" => format!("_ox_fs_create_dir({})", self.compile_expr(&args[0])),
+                    "thread::spawn" => {
+                        let fn_arg = self.compile_expr(&args[0]);
+                        format!("_ox_thread_spawn((void*){})", fn_arg)
+                    }
+                    "thread::sleep" => {
+                        format!("_ox_thread_sleep((int64_t)({}))", self.compile_expr(&args[0]))
+                    }
+                    "channel" => "_ox_channel_create()".to_string(),
+                    "Mutex::new" => {
+                        let val_code = self.compile_expr(&args[0]);
+                        format!("_ox_mutex_new((int64_t)({}))", val_code)
+                    }
                     "get_env" => format!("_ox_get_env({})", self.compile_expr(&args[0])),
                     "exit" => format!("exit((int)({}))", self.compile_expr(&args[0])),
                     "map_new" => "_ox_map_new()".to_string(),

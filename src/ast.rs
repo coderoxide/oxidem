@@ -22,6 +22,10 @@ pub enum Type {
     Box(Box<Type>),
     Rc(Box<Type>),
     RefCell(Box<Type>),
+    JoinHandle(Box<Type>),
+    Sender(Box<Type>),
+    Receiver(Box<Type>),
+    Mutex(Box<Type>),
     Tuple(Vec<Type>),
     Ref {
         inner: Box<Type>,
@@ -60,6 +64,10 @@ impl std::fmt::Display for Type {
             Type::Box(inner) => write!(f, "Box<{}>", inner),
             Type::Rc(inner) => write!(f, "Rc<{}>", inner),
             Type::RefCell(inner) => write!(f, "RefCell<{}>", inner),
+            Type::JoinHandle(inner) => write!(f, "JoinHandle<{}>", inner),
+            Type::Sender(inner) => write!(f, "Sender<{}>", inner),
+            Type::Receiver(inner) => write!(f, "Receiver<{}>", inner),
+            Type::Mutex(inner) => write!(f, "Mutex<{}>", inner),
             Type::Tuple(types) => {
                 let inner = types.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", ");
                 write!(f, "({})", inner)

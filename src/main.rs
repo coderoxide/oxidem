@@ -421,7 +421,7 @@ fn build_file(config: BuildConfig) {
     println!("🔨 {} ile native binary derleniyor (Profil: {}, Optimizasyon: {})...", config.compiler, profile, config.opt_level);
 
     let cc_status = Command::new(&config.compiler)
-        .args(&[&config.opt_level, &c_file, "-o", &final_binary, "-lm"])
+        .args(&[&config.opt_level, &c_file, "-o", &final_binary, "-lm", "-pthread"])
         .status();
 
     match cc_status {

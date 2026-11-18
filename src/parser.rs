@@ -566,6 +566,26 @@ impl Parser {
                             return Err(format!("Hata [{}:{}]: 'RefCell' tam 1 tip parametresi bekler: RefCell<T>", token.span.line, token.span.col));
                         }
                         Ok(Type::RefCell(Box::new(type_args.remove(0))))
+                    } else if name == "JoinHandle" {
+                        if type_args.len() != 1 {
+                            return Err(format!("Hata [{}:{}]: 'JoinHandle' tam 1 tip parametresi bekler: JoinHandle<T>", token.span.line, token.span.col));
+                        }
+                        Ok(Type::JoinHandle(Box::new(type_args.remove(0))))
+                    } else if name == "Sender" {
+                        if type_args.len() != 1 {
+                            return Err(format!("Hata [{}:{}]: 'Sender' tam 1 tip parametresi bekler: Sender<T>", token.span.line, token.span.col));
+                        }
+                        Ok(Type::Sender(Box::new(type_args.remove(0))))
+                    } else if name == "Receiver" {
+                        if type_args.len() != 1 {
+                            return Err(format!("Hata [{}:{}]: 'Receiver' tam 1 tip parametresi bekler: Receiver<T>", token.span.line, token.span.col));
+                        }
+                        Ok(Type::Receiver(Box::new(type_args.remove(0))))
+                    } else if name == "Mutex" {
+                        if type_args.len() != 1 {
+                            return Err(format!("Hata [{}:{}]: 'Mutex' tam 1 tip parametresi bekler: Mutex<T>", token.span.line, token.span.col));
+                        }
+                        Ok(Type::Mutex(Box::new(type_args.remove(0))))
                     } else {
                         Ok(Type::Generic {
                             name: name.clone(),

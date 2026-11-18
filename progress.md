@@ -7,7 +7,7 @@ Bu dosya, Rust tabanlı Oxide (`.ox`) programlama dili ve derleyici/yorumlayıc�
 ## 📊 Genel Durum
 - **Proje Adı:** Oxide (`.ox`)
 - **Geliştirme Dili:** Rust (2024 edition)
-- **Mevcut Sürüm:** v0.16.0 (Derleme Zamanı Sabitleri const, Standart Dosya Sistemi fs::, Sistem ve Çevre Değişkenleri env::, Akıllı İşaretçiler Box/Rc/RefCell, Target Build Dizin Mimarisi, oxide.lock Kilit Dosyası, oxide clean, Operator Overloading & Traits, Slices & Range Indexing, String Interpolation f"...", Tuples & Destructuring, Trait & Interface System, Option/Result & Try '?' Operator, Generics & Monomorphization, Closures, Arena Management, HIR Optimizer, Test Engine & oxide.toml)
+- **Mevcut Sürüm:** v0.17.0 (Eşzamanlılık ve Çoklu İş Parçacığı thread::spawn/sleep, Mesajlaşma Kanalları channel/send/recv, Karşılıklı Dışlama Mutex<T>, Derleme Zamanı Sabitleri const, Standart Dosya Sistemi fs::, Sistem ve Çevre Değişkenleri env::, Akıllı İşaretçiler Box/Rc/RefCell, Target Build Dizin Mimarisi, oxide.lock Kilit Dosyası, oxide clean, Operator Overloading & Traits, Slices & Range Indexing, String Interpolation f"...", Tuples & Destructuring, Trait & Interface System, Option/Result & Try '?' Operator, Generics & Monomorphization, Closures, Arena Management, HIR Optimizer, Test Engine & oxide.toml)
 - **Bağımlılık Durumu:** Sıfır dış bağımlılık (Pure Rust Standard Library)
 - **Çalışma Modları:** Yorumlayıcı (`run`), Tip Denetleyici (`check`), Native GCC Derleyici (`build`), Token Dökücü (`tokens`), AST Dökücü (`ast`), HIR Dökücü (`hir`), REPL (`repl`)
 
@@ -322,10 +322,19 @@ Bu dosya, Rust tabanlı Oxide (`.ox`) programlama dili ve derleyici/yorumlayıc�
 
 ---
 
-### Aşama 21: Eşzamanlılık & İş Parçacıkları (Concurrency: `thread::spawn`, `channel`, `Mutex<T>`) (Sıradaki Hedef)
-- [ ] **`thread::spawn` ile İş Parçacığı Başlatma:** Fonksiyon veya closure alarak arka planda bağımsız çalışan thread desteği (`thread::spawn(|| { ... })`).
-- [ ] **Mesajlaşma Kanalları (`channel`):** Thread'ler arası güvenli veri iletimi sağlayan Sender/Receiver kuyruğu (`let (tx, rx) = channel();`).
-- [ ] **`Mutex<T>` ile Güvenli Paylaşımlı Bellek:** Thread'ler arasında güvenli veri paylaşımı ve kilit yönetimi (`mutex.lock()`).
-- [ ] **Native C Transpiler & POSIX pthreads Entegrasyonu:** POSIX Threads (`pthread_create`, `pthread_join`, `pthread_mutex`) ile C derleyicisi uyumu.
+### Aşama 21: Eşzamanlılık & İş Parçacıkları (Concurrency: `thread::spawn`, `channel`, `Mutex<T>`) (Tamamlandı)
+- [x] **`thread::spawn` ile İş Parçacığı Başlatma:** Fonksiyon veya closure alarak arka planda bağımsız çalışan thread desteği (`thread::spawn(|| { ... })`), `thread::sleep(ms)` uyku süresi ve `.join().unwrap()` ile thread sonucunu alma.
+- [x] **Mesajlaşma Kanalları (`channel`):** Thread'ler arası güvenli veri iletimi sağlayan Sender/Receiver kuyruğu (`let (tx, rx) = channel();`), `tx.send(val)` ile mesaj iletme ve `rx.recv().unwrap()` ile bloklayıcı mesaj alma.
+- [x] **`Mutex<T>` ile Güvenli Paylaşımlı Bellek:** Thread'ler arasında güvenli veri paylaşımı, `Mutex::new(val)` başlatıcısı, `m.lock()` ile kilit koruması ve recursive mutex desteği.
+- [x] **Thread-Safe Evaluator Mimarisi:** `Value` enum'ı `Arc<Mutex<...>>` (Shared) modeline taşınarak %100 `Send + Sync` yapıldı.
+- [x] **Native C Transpiler & POSIX pthreads Entegrasyonu:** POSIX Threads (`pthread_create`, `pthread_join`, `pthread_mutex`, `pthread_cond`) ile C transpiler uyumu, GCC otomatik `-pthread` bayrağı ile native derleme.
+- [x] **Otomatik Entegrasyon Testi:** `test_concurrency_and_threads` ile 32/32 test başarıyla geçti.
+
+---
+
+### Aşama 22: Ağ & Soket Programlama (Network & Sockets: `TcpListener`, `TcpStream`, HTTP İstemcisi) (Sıradaki Hedef)
+- [ ] **TCP Sunucu Soketi (`net::TcpListener`):** Belirtilen portu dinleme (`TcpListener::bind("127.0.0.1:8080")`), gelen istemci bağlantılarını kabul etme (`listener.accept()`).
+- [ ] **TCP İstemci Soketi (`net::TcpStream`):** Uzak sunucuya bağlanma (`TcpStream::connect("...")`), veri gönderme (`stream.write(...)`) ve veri okuma (`stream.read(...)`).
+- [ ] **Native C Transpiler & Berkeley Sockets Entegrasyonu:** `<sys/socket.h>`, `<netinet/in.h>`, `<arpa/inet.h>` C runtime entegrasyonu.
 
 

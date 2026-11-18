@@ -738,4 +738,48 @@ fn test_const_and_filesystem() {
     let _ = std::fs::remove_file(format!("{}.c", bin_path));
 }
 
+#[test]
+fn test_concurrency_and_threads() {
+    // 1. check
+    let check_status = Command::new("cargo")
+        .args(["run", "--quiet", "--", "check", "examples/concurrency_demo.ox"])
+        .status()
+        .expect("cargo run check failed");
+    assert!(check_status.success());
+
+    // 2. run (interpreter)
+    let run_output = Command::new("cargo")
+        .args(["run", "--quiet", "--", "run", "examples/concurrency_demo.ox"])
+        .output()
+        .expect("cargo run run failed");
+    assert!(run_output.status.success());
+    let run_stdout = String::from_utf8_lossy(&run_output.stdout);
+
+    // 3. build (GCC native)
+    let bin_path = "examples/test_native_concurrency_bin";
+    let build_status = Command::new("cargo")
+        .args(["run", "--quiet", "--", "build", "examples/concurrency_demo.ox", "-o", bin_path])
+        .status()
+        .expect("cargo run build failed");
+    assert!(build_status.success());
+
+    // 4. execute native binary
+    let exec_output = Command::new(format!("./{}", bin_path))
+        .output()
+        .expect("failed to execute native binary");
+    assert!(exec_output.status.success());
+    let exec_stdout = String::from_utf8_lossy(&exec_output.stdout);
+
+    // 5. Parity & content assertion
+    assert_eq!(run_stdout.trim(), exec_stdout.trim());
+    assert!(run_stdout.contains("Ana Thread: Thread 1'den donen sonuc: 42"));
+    assert!(run_stdout.contains("Tuketici Thread (Ana): Alinan mesaj 1: 100"));
+    assert!(run_stdout.contains("Tuketici Thread (Ana): Alinan mesaj 2: 200"));
+    assert!(run_stdout.contains("Mutex kilit sonrasi sayac degeri: 25"));
+
+    // Cleanup
+    let _ = std::fs::remove_file(bin_path);
+    let _ = std::fs::remove_file(format!("{}.c", bin_path));
+}
+
 

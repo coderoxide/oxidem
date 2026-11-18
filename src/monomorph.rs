@@ -18,6 +18,10 @@ pub fn mangle_type(ty: &Type) -> String {
         Type::Box(inner) => format!("Box__{}", mangle_type(inner)),
         Type::Rc(inner) => format!("Rc__{}", mangle_type(inner)),
         Type::RefCell(inner) => format!("RefCell__{}", mangle_type(inner)),
+        Type::JoinHandle(inner) => format!("JoinHandle__{}", mangle_type(inner)),
+        Type::Sender(inner) => format!("Sender__{}", mangle_type(inner)),
+        Type::Receiver(inner) => format!("Receiver__{}", mangle_type(inner)),
+        Type::Mutex(inner) => format!("Mutex__{}", mangle_type(inner)),
         Type::Tuple(types) => {
             let inner = types.iter().map(mangle_type).collect::<Vec<_>>().join("_");
             format!("tuple_{}", inner)
@@ -58,6 +62,10 @@ pub fn normalize_type(ty: &Type) -> Type {
         Type::Box(inner) => Type::Box(Box::new(normalize_type(inner))),
         Type::Rc(inner) => Type::Rc(Box::new(normalize_type(inner))),
         Type::RefCell(inner) => Type::RefCell(Box::new(normalize_type(inner))),
+        Type::JoinHandle(inner) => Type::JoinHandle(Box::new(normalize_type(inner))),
+        Type::Sender(inner) => Type::Sender(Box::new(normalize_type(inner))),
+        Type::Receiver(inner) => Type::Receiver(Box::new(normalize_type(inner))),
+        Type::Mutex(inner) => Type::Mutex(Box::new(normalize_type(inner))),
         Type::Tuple(types) => Type::Tuple(types.iter().map(normalize_type).collect()),
         Type::Ref { inner, is_mut } => Type::Ref {
             inner: Box::new(normalize_type(inner)),
@@ -99,6 +107,10 @@ pub fn substitute_type(ty: &Type, mapping: &HashMap<String, Type>) -> Type {
         Type::Box(inner) => Type::Box(Box::new(substitute_type(inner, mapping))),
         Type::Rc(inner) => Type::Rc(Box::new(substitute_type(inner, mapping))),
         Type::RefCell(inner) => Type::RefCell(Box::new(substitute_type(inner, mapping))),
+        Type::JoinHandle(inner) => Type::JoinHandle(Box::new(substitute_type(inner, mapping))),
+        Type::Sender(inner) => Type::Sender(Box::new(substitute_type(inner, mapping))),
+        Type::Receiver(inner) => Type::Receiver(Box::new(substitute_type(inner, mapping))),
+        Type::Mutex(inner) => Type::Mutex(Box::new(substitute_type(inner, mapping))),
         Type::Tuple(types) => Type::Tuple(types.iter().map(|t| substitute_type(t, mapping)).collect()),
         Type::Ref { inner, is_mut } => Type::Ref {
             inner: Box::new(substitute_type(inner, mapping)),
@@ -156,6 +168,18 @@ pub fn unify_types(
             unify_types(p_in, a_in, mapping, generic_params)
         }
         (Type::RefCell(p_in), Type::RefCell(a_in)) => {
+            unify_types(p_in, a_in, mapping, generic_params)
+        }
+        (Type::JoinHandle(p_in), Type::JoinHandle(a_in)) => {
+            unify_types(p_in, a_in, mapping, generic_params)
+        }
+        (Type::Sender(p_in), Type::Sender(a_in)) => {
+            unify_types(p_in, a_in, mapping, generic_params)
+        }
+        (Type::Receiver(p_in), Type::Receiver(a_in)) => {
+            unify_types(p_in, a_in, mapping, generic_params)
+        }
+        (Type::Mutex(p_in), Type::Mutex(a_in)) => {
             unify_types(p_in, a_in, mapping, generic_params)
         }
         (Type::Result(p_ok, p_err), Type::Result(a_ok, a_err)) => {
@@ -1140,6 +1164,23 @@ impl Monomorphizer {
                             }
                             Ok(Type::Void)
                         }
+                        "thread::spawn" => {
+                            if !args.is_empty() {
+                                if let Ok(Type::Fn { ret, .. }) = self.infer_expr_type(&args[0], env) {
+                                    return Ok(Type::JoinHandle(ret));
+                                }
+                            }
+                            Ok(Type::JoinHandle(Box::new(Type::Void)))
+                        }
+                        "thread::sleep" => Ok(Type::Void),
+                        "channel" => Ok(Type::Tuple(vec![Type::Sender(Box::new(Type::Void)), Type::Receiver(Box::new(Type::Void))])),
+                        "Mutex::new" => {
+                            if !args.is_empty() {
+                                let inner = self.infer_expr_type(&args[0], env).unwrap_or(Type::Void);
+                                return Ok(Type::Mutex(Box::new(inner)));
+                            }
+                            Ok(Type::Void)
+                        }
                         "len" | "to_int" => Ok(Type::Int),
                         "to_float" => Ok(Type::Float),
                         "to_char" => Ok(Type::Char),
@@ -1206,6 +1247,18 @@ impl Monomorphizer {
                 }
             }
             Expr::TupleIndexAssign { .. } => Ok(Type::Void),
+            Expr::MethodCall { target, method, .. } => {
+                if let Ok(target_ty) = self.infer_expr_type(target, env) {
+                    match target_ty {
+                        Type::JoinHandle(inner) if method == "join" => return Ok(Type::Result(inner, Box::new(Type::Str))),
+                        Type::Sender(_) if method == "send" => return Ok(Type::Result(Box::new(Type::Void), Box::new(Type::Str))),
+                        Type::Receiver(inner) if method == "recv" => return Ok(Type::Result(inner, Box::new(Type::Str))),
+                        Type::Mutex(inner) if method == "lock" => return Ok(Type::Ref { inner, is_mut: true }),
+                        _ => {}
+                    }
+                }
+                Ok(Type::Void)
+            }
             Expr::FormatString(..) => Ok(Type::Str),
             _ => Ok(Type::Void),
         }
