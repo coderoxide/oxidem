@@ -1,0 +1,11 @@
+/target
+*.c
+examples/*.c
+examples/hello
+examples/fibonacci
+examples/structs
+examples/enums_and_match
+examples/arrays
+examples/for_loops
+examples/*
+!examples/*.ox

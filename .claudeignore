@@ -1,0 +1,23 @@
+# Build artifacts
+/target/
+target/
+
+# Package manager lock file
+Cargo.lock
+
+# Version control
+.git/
+.gitignore
+
+# OS & Editor generated files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Temporary & Log files
+*.log
+tmp/
