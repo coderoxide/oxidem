@@ -45,6 +45,7 @@ fn expr_has_str(e: &Expr) -> bool {
     }
 }
 
+#[derive(Clone)]
 pub struct CodegenC {
     output: String,
     indent: usize,
@@ -168,6 +169,8 @@ impl CodegenC {
                         let inner = if let Some(arg) = args.first() { self.infer_expr_type(arg) } else { Type::Void };
                         Type::Mutex(Box::new(inner))
                     }
+                    "TcpListener::bind" | "net::TcpListener::bind" => Type::Result(Box::new(Type::TcpListener), Box::new(Type::Str)),
+                    "TcpStream::connect" | "net::TcpStream::connect" => Type::Result(Box::new(Type::TcpStream), Box::new(Type::Str)),
                     _ => self.fn_ret_types.get(callee).cloned().unwrap_or(Type::Void),
                 }
             }
@@ -200,6 +203,10 @@ impl CodegenC {
                     Type::Sender(_) if method == "send" => return Type::Result(Box::new(Type::Void), Box::new(Type::Str)),
                     Type::Receiver(inner) if method == "recv" => return Type::Result(inner.clone(), Box::new(Type::Str)),
                     Type::Mutex(inner) if method == "lock" => return Type::Ref { inner: inner.clone(), is_mut: true },
+                    Type::TcpListener if method == "accept" => return Type::Result(Box::new(Type::TcpStream), Box::new(Type::Str)),
+                    Type::TcpStream if method == "write" => return Type::Result(Box::new(Type::Int), Box::new(Type::Str)),
+                    Type::TcpStream if method == "read" => return Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+                    Type::TcpStream if method == "close" => return Type::Void,
                     _ => {}
                 }
                 let mut curr_target = target_ty;
@@ -545,6 +552,8 @@ impl CodegenC {
             Type::Sender(_) => "_OxSender*".to_string(),
             Type::Receiver(_) => "_OxReceiver*".to_string(),
             Type::Mutex(_) => "_OxMutex*".to_string(),
+            Type::TcpListener => "_OxTcpListener*".to_string(),
+            Type::TcpStream => "_OxTcpStream*".to_string(),
             Type::Generic { name, type_args } => {
                 let args_str = type_args.iter().map(|a| match a {
                     Type::Int => "int".to_string(),
@@ -616,6 +625,9 @@ impl CodegenC {
         self.write_line("#include <sys/stat.h>");
         self.write_line("#include <pthread.h>");
         self.write_line("#include <time.h>");
+        self.write_line("#include <sys/socket.h>");
+        self.write_line("#include <netinet/in.h>");
+        self.write_line("#include <arpa/inet.h>");
         self.write_line("");
 
         // Runtime helpers
@@ -1287,6 +1299,16 @@ impl CodegenC {
         self.write_line("");
         self.write_line("typedef struct { _OxSender* _0; _OxReceiver* _1; } _OxTuple_Sender__void_Receiver__void;");
         self.write_line("");
+        self.write_line("/* TCP Sockets Runtime Types */");
+        self.write_line("typedef struct {");
+        self.write_line("    int fd;");
+        self.write_line("    char addr[64];");
+        self.write_line("} _OxTcpListener;");
+        self.write_line("");
+        self.write_line("typedef struct {");
+        self.write_line("    int fd;");
+        self.write_line("} _OxTcpStream;");
+        self.write_line("");
 
         // Tuple type declarations
         for tuple_tys in &self.tuples.clone() {
@@ -1503,6 +1525,119 @@ impl CodegenC {
         self.write_line("    _OxReceiver* rx = (_OxReceiver*)malloc(sizeof(_OxReceiver));");
         self.write_line("    rx->shared = s;");
         self.write_line("    return (_OxTuple_Sender__void_Receiver__void){ ._0 = tx, ._1 = rx };");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("/* TCP Sockets Functions */");
+        self.write_line("static inline _OxResult _ox_tcp_listener_bind(const char* addr_port) {");
+        self.write_line("    if (!addr_port) return _ox_err((int64_t)(uintptr_t)\"Null address\");");
+        self.write_line("    char ip[64] = \"127.0.0.1\";");
+        self.write_line("    int port = 8080;");
+        self.write_line("    const char* colon = strchr(addr_port, ':');");
+        self.write_line("    if (colon) {");
+        self.write_line("        size_t ip_len = colon - addr_port;");
+        self.write_line("        if (ip_len < sizeof(ip)) {");
+        self.write_line("            strncpy(ip, addr_port, ip_len);");
+        self.write_line("            ip[ip_len] = '\\0';");
+        self.write_line("        }");
+        self.write_line("        port = atoi(colon + 1);");
+        self.write_line("    } else {");
+        self.write_line("        port = atoi(addr_port);");
+        self.write_line("    }");
+        self.write_line("    int fd = socket(AF_INET, SOCK_STREAM, 0);");
+        self.write_line("    if (fd < 0) return _ox_err((int64_t)(uintptr_t)\"Socket olusturulamadi\");");
+        self.write_line("    int opt = 1;");
+        self.write_line("    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));");
+        self.write_line("    struct sockaddr_in sin;");
+        self.write_line("    memset(&sin, 0, sizeof(sin));");
+        self.write_line("    sin.sin_family = AF_INET;");
+        self.write_line("    sin.sin_port = htons(port);");
+        self.write_line("    inet_pton(AF_INET, ip, &sin.sin_addr);");
+        self.write_line("    if (bind(fd, (struct sockaddr*)&sin, sizeof(sin)) < 0) {");
+        self.write_line("        close(fd);");
+        self.write_line("        return _ox_err((int64_t)(uintptr_t)\"Port baglanamadi (bind failed)\");");
+        self.write_line("    }");
+        self.write_line("    if (listen(fd, 128) < 0) {");
+        self.write_line("        close(fd);");
+        self.write_line("        return _ox_err((int64_t)(uintptr_t)\"Port dinlenemedi (listen failed)\");");
+        self.write_line("    }");
+        self.write_line("    _OxTcpListener* l = (_OxTcpListener*)malloc(sizeof(_OxTcpListener));");
+        self.write_line("    l->fd = fd;");
+        self.write_line("    strncpy(l->addr, addr_port, sizeof(l->addr) - 1);");
+        self.write_line("    return _ox_ok((int64_t)(uintptr_t)l);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxResult _ox_tcp_listener_accept(_OxTcpListener* l) {");
+        self.write_line("    if (!l || l->fd < 0) return _ox_err((int64_t)(uintptr_t)\"Gecersiz TcpListener\");");
+        self.write_line("    struct sockaddr_in client_addr;");
+        self.write_line("    socklen_t client_len = sizeof(client_addr);");
+        self.write_line("    int client_fd = accept(l->fd, (struct sockaddr*)&client_addr, &client_len);");
+        self.write_line("    if (client_fd < 0) return _ox_err((int64_t)(uintptr_t)\"Baglanti kabul edilemedi (accept failed)\");");
+        self.write_line("    _OxTcpStream* s = (_OxTcpStream*)malloc(sizeof(_OxTcpStream));");
+        self.write_line("    s->fd = client_fd;");
+        self.write_line("    return _ox_ok((int64_t)(uintptr_t)s);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxResult _ox_tcp_stream_connect(const char* addr_port) {");
+        self.write_line("    if (!addr_port) return _ox_err((int64_t)(uintptr_t)\"Null address\");");
+        self.write_line("    char ip[64] = \"127.0.0.1\";");
+        self.write_line("    int port = 8080;");
+        self.write_line("    const char* colon = strchr(addr_port, ':');");
+        self.write_line("    if (colon) {");
+        self.write_line("        size_t ip_len = colon - addr_port;");
+        self.write_line("        if (ip_len < sizeof(ip)) {");
+        self.write_line("            strncpy(ip, addr_port, ip_len);");
+        self.write_line("            ip[ip_len] = '\\0';");
+        self.write_line("        }");
+        self.write_line("        port = atoi(colon + 1);");
+        self.write_line("    } else {");
+        self.write_line("        port = atoi(addr_port);");
+        self.write_line("    }");
+        self.write_line("    int fd = socket(AF_INET, SOCK_STREAM, 0);");
+        self.write_line("    if (fd < 0) return _ox_err((int64_t)(uintptr_t)\"Socket olusturulamadi\");");
+        self.write_line("    struct sockaddr_in sin;");
+        self.write_line("    memset(&sin, 0, sizeof(sin));");
+        self.write_line("    sin.sin_family = AF_INET;");
+        self.write_line("    sin.sin_port = htons(port);");
+        self.write_line("    inet_pton(AF_INET, ip, &sin.sin_addr);");
+        self.write_line("    int conn_res = -1;");
+        self.write_line("    for (int retry = 0; retry < 6; retry++) {");
+        self.write_line("        conn_res = connect(fd, (struct sockaddr*)&sin, sizeof(sin));");
+        self.write_line("        if (conn_res == 0) break;");
+        self.write_line("        if (retry < 5) usleep(50000);");
+        self.write_line("    }");
+        self.write_line("    if (conn_res < 0) {");
+        self.write_line("        close(fd);");
+        self.write_line("        return _ox_err((int64_t)(uintptr_t)\"Sunucuya baglanilamadi (connect failed)\");");
+        self.write_line("    }");
+        self.write_line("    _OxTcpStream* s = (_OxTcpStream*)malloc(sizeof(_OxTcpStream));");
+        self.write_line("    s->fd = fd;");
+        self.write_line("    return _ox_ok((int64_t)(uintptr_t)s);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxResult _ox_tcp_stream_write(_OxTcpStream* s, const char* data) {");
+        self.write_line("    if (!s || s->fd < 0) return _ox_err((int64_t)(uintptr_t)\"Gecersiz TcpStream\");");
+        self.write_line("    if (!data) return _ox_ok(0);");
+        self.write_line("    size_t len = strlen(data);");
+        self.write_line("    ssize_t n = send(s->fd, data, len, 0);");
+        self.write_line("    if (n < 0) return _ox_err((int64_t)(uintptr_t)\"Veri gonderilemedi (send failed)\");");
+        self.write_line("    return _ox_ok((int64_t)n);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxResult _ox_tcp_stream_read(_OxTcpStream* s) {");
+        self.write_line("    if (!s || s->fd < 0) return _ox_err((int64_t)(uintptr_t)\"Gecersiz TcpStream\");");
+        self.write_line("    char* buf = _ox_arena_alloc(4096);");
+        self.write_line("    ssize_t n = recv(s->fd, buf, 4095, 0);");
+        self.write_line("    if (n < 0) return _ox_err((int64_t)(uintptr_t)\"Veri okunamadi (recv failed)\");");
+        self.write_line("    buf[n] = '\\0';");
+        self.write_line("    return _ox_ok((int64_t)(uintptr_t)buf);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline void _ox_tcp_stream_close(_OxTcpStream* s) {");
+        self.write_line("    if (!s) return;");
+        self.write_line("    if (s->fd >= 0) {");
+        self.write_line("        close(s->fd);");
+        self.write_line("        s->fd = -1;");
+        self.write_line("    }");
         self.write_line("}");
         self.write_line("");
 
@@ -2052,8 +2187,24 @@ impl CodegenC {
                     BinOp::Mul => format!("({} * {})", l, r),
                     BinOp::Div => format!("({} / {})", l, r),
                     BinOp::Mod => format!("({} % {})", l, r),
-                    BinOp::Eq => format!("({} == {})", l, r),
-                    BinOp::NotEq => format!("({} != {})", l, r),
+                    BinOp::Eq => {
+                        let l_ty = self.infer_expr_type(left);
+                        let r_ty = self.infer_expr_type(right);
+                        if l_ty == Type::Str || r_ty == Type::Str || l_ty == Type::StrSlice || r_ty == Type::StrSlice || expr_has_str(left) || expr_has_str(right) {
+                            format!("(strcmp(_ox_to_str({}), _ox_to_str({})) == 0)", l, r)
+                        } else {
+                            format!("({} == {})", l, r)
+                        }
+                    }
+                    BinOp::NotEq => {
+                        let l_ty = self.infer_expr_type(left);
+                        let r_ty = self.infer_expr_type(right);
+                        if l_ty == Type::Str || r_ty == Type::Str || l_ty == Type::StrSlice || r_ty == Type::StrSlice || expr_has_str(left) || expr_has_str(right) {
+                            format!("(strcmp(_ox_to_str({}), _ox_to_str({})) != 0)", l, r)
+                        } else {
+                            format!("({} != {})", l, r)
+                        }
+                    }
                     BinOp::Lt => format!("({} < {})", l, r),
                     BinOp::LtEq => format!("({} <= {})", l, r),
                     BinOp::Gt => format!("({} > {})", l, r),
@@ -2213,6 +2364,10 @@ impl CodegenC {
                         };
                         format!("(({}*)_ox_mutex_lock({}))", inner_c, t)
                     }
+                    "accept" if matches!(target_ty, Type::TcpListener) => format!("_ox_tcp_listener_accept({})", t),
+                    "write" if matches!(target_ty, Type::TcpStream) => format!("_ox_tcp_stream_write({}, _ox_to_str({}))", t, self.compile_expr(&args[0])),
+                    "read" if matches!(target_ty, Type::TcpStream) => format!("_ox_tcp_stream_read({})", t),
+                    "close" if matches!(target_ty, Type::TcpStream) => format!("_ox_tcp_stream_close({})", t),
                     "unwrap" => {
                         let inner_ty = match target_ty {
                             Type::Option(ref in_t) => Some((**in_t).clone()),
@@ -2220,7 +2375,7 @@ impl CodegenC {
                             _ => None,
                         };
                         if let Some(in_t) = inner_ty {
-                            if matches!(in_t, Type::Box(_) | Type::Rc(_) | Type::RefCell(_) | Type::Str) {
+                            if matches!(in_t, Type::Box(_) | Type::Rc(_) | Type::RefCell(_) | Type::Str | Type::TcpListener | Type::TcpStream | Type::JoinHandle(_) | Type::Sender(_) | Type::Receiver(_) | Type::Mutex(_)) {
                                 let c_ty = self.to_c_type(&in_t);
                                 format!("(({})(uintptr_t)_ox_unwrap({}))", c_ty, t)
                             } else {
@@ -2345,6 +2500,12 @@ impl CodegenC {
                     "Mutex::new" => {
                         let val_code = self.compile_expr(&args[0]);
                         format!("_ox_mutex_new((int64_t)({}))", val_code)
+                    }
+                    "TcpListener::bind" | "net::TcpListener::bind" => {
+                        format!("_ox_tcp_listener_bind({})", self.compile_expr(&args[0]))
+                    }
+                    "TcpStream::connect" | "net::TcpStream::connect" => {
+                        format!("_ox_tcp_stream_connect({})", self.compile_expr(&args[0]))
                     }
                     "get_env" => format!("_ox_get_env({})", self.compile_expr(&args[0])),
                     "exit" => format!("exit((int)({}))", self.compile_expr(&args[0])),
@@ -2497,6 +2658,10 @@ impl CodegenC {
                 }
             }
             Expr::Closure { params, body, .. } => {
+                let mut sub_cg = self.clone();
+                for p in params {
+                    sub_cg.var_ox_types.insert(p.name.clone(), p.ty.clone());
+                }
                 let param_strs = params
                     .iter()
                     .map(|p| format!("int64_t {}", p.name))
@@ -2505,11 +2670,19 @@ impl CodegenC {
                 let mut stmts_str = Vec::new();
                 for s in &body.stmts {
                     match s {
-                        Stmt::Expr(e) => stmts_str.push(format!("{};", self.compile_expr(e))),
+                        Stmt::Expr(e) => stmts_str.push(format!("{};", sub_cg.compile_expr(e))),
                         Stmt::Let { name, ty, init, .. } => {
-                            let type_str = if let Some(t) = ty { self.to_c_type(t) } else { "__auto_type".to_string() };
+                            let actual_ty = if let Some(t) = ty {
+                                t.clone()
+                            } else if let Some(i) = init {
+                                sub_cg.infer_expr_type(i)
+                            } else {
+                                Type::Int
+                            };
+                            sub_cg.var_ox_types.insert(name.clone(), actual_ty.clone());
+                            let type_str = if let Some(t) = ty { sub_cg.to_c_type(t) } else { "__auto_type".to_string() };
                             if let Some(i) = init {
-                                stmts_str.push(format!("{} {} = {};", type_str, name, self.compile_expr(i)));
+                                stmts_str.push(format!("{} {} = {};", type_str, name, sub_cg.compile_expr(i)));
                             } else {
                                 stmts_str.push(format!("{} {};", type_str, name));
                             }
@@ -2517,7 +2690,7 @@ impl CodegenC {
                         _ => {}
                     }
                 }
-                let trail = body.trailing_expr.as_ref().map(|t| self.compile_expr(t)).unwrap_or_else(|| "0".to_string());
+                let trail = body.trailing_expr.as_ref().map(|t| sub_cg.compile_expr(t)).unwrap_or_else(|| "0".to_string());
                 format!("({{ int64_t _closure({}) {{ {} return {}; }} _closure; }})", param_strs, stmts_str.join(" "), trail)
             }
             Expr::Match { subject, arms, .. } => {

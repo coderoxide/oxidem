@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, mpsc};
+use std::io::{Read, Write};
 
 pub type Shared<T> = Arc<Mutex<T>>;
 pub fn shared<T>(val: T) -> Shared<T> {
@@ -48,6 +49,8 @@ pub enum Value {
     Sender(Arc<mpsc::Sender<Value>>),
     Receiver(Arc<Mutex<mpsc::Receiver<Value>>>),
     Mutex(Arc<Mutex<Value>>),
+    TcpListener(Arc<Mutex<std::net::TcpListener>>),
+    TcpStream(Arc<Mutex<std::net::TcpStream>>),
     Some(Box<Value>),
     None,
     Ok(Box<Value>),
@@ -78,6 +81,8 @@ impl PartialEq for Value {
             (Value::Sender(a), Value::Sender(b)) => Arc::ptr_eq(a, b),
             (Value::Receiver(a), Value::Receiver(b)) => Arc::ptr_eq(a, b),
             (Value::Mutex(a), Value::Mutex(b)) => Arc::ptr_eq(a, b),
+            (Value::TcpListener(a), Value::TcpListener(b)) => Arc::ptr_eq(a, b),
+            (Value::TcpStream(a), Value::TcpStream(b)) => Arc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -144,6 +149,8 @@ impl std::fmt::Display for Value {
                 let inner = m.lock().unwrap();
                 write!(f, "Mutex({})", inner)
             }
+            Value::TcpListener(_) => write!(f, "TcpListener"),
+            Value::TcpStream(_) => write!(f, "TcpStream"),
             Value::Some(v) => write!(f, "Some({})", v),
             Value::None => write!(f, "None"),
             Value::Ok(v) => write!(f, "Ok({})", v),
@@ -426,6 +433,44 @@ impl Interpreter {
                     return Err(format!("Hata [{}:{}]: 'Mutex::new' 1 argüman bekler", span.line, span.col));
                 }
                 return Ok(Value::Mutex(Arc::new(Mutex::new(args.into_iter().next().unwrap()))));
+            }
+            "TcpListener::bind" | "net::TcpListener::bind" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'TcpListener::bind' 1 argüman bekler", span.line, span.col));
+                }
+                match &args[0] {
+                    Value::Str(addr) => {
+                        match std::net::TcpListener::bind(addr) {
+                            Ok(listener) => return Ok(Value::Ok(Box::new(Value::TcpListener(Arc::new(Mutex::new(listener)))))),
+                            Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                        }
+                    }
+                    _ => return Err(format!("Hata [{}:{}]: 'TcpListener::bind' adres parametresini 'str' bekler", span.line, span.col)),
+                }
+            }
+            "TcpStream::connect" | "net::TcpStream::connect" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'TcpStream::connect' 1 argüman bekler", span.line, span.col));
+                }
+                match &args[0] {
+                    Value::Str(addr) => {
+                        let mut res = std::net::TcpStream::connect(addr);
+                        if res.is_err() {
+                            for _ in 0..6 {
+                                std::thread::sleep(std::time::Duration::from_millis(50));
+                                res = std::net::TcpStream::connect(addr);
+                                if res.is_ok() {
+                                    break;
+                                }
+                            }
+                        }
+                        match res {
+                            Ok(stream) => return Ok(Value::Ok(Box::new(Value::TcpStream(Arc::new(Mutex::new(stream)))))),
+                            Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                        }
+                    }
+                    _ => return Err(format!("Hata [{}:{}]: 'TcpStream::connect' adres parametresini 'str' bekler", span.line, span.col)),
+                }
             }
             "format" => {
                 if args.is_empty() {
@@ -2069,6 +2114,47 @@ impl Interpreter {
                     }
                     Value::Mutex(m_arc) if method == "lock" => {
                         Ok(Value::Ref { val: Arc::clone(m_arc), is_mut: true })
+                    }
+                    Value::TcpListener(l_arc) if method == "accept" => {
+                        if !args.is_empty() { return Err(format!("Hata [{}:{}]: 'accept()' argüman beklemez", span.line, span.col)); }
+                        let listener = l_arc.lock().map_err(|e| e.to_string())?;
+                        match listener.accept() {
+                            Ok((stream, _)) => Ok(Value::Ok(Box::new(Value::TcpStream(Arc::new(Mutex::new(stream)))))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                        }
+                    }
+                    Value::TcpStream(s_arc) if method == "write" => {
+                        if args.len() != 1 { return Err(format!("Hata [{}:{}]: 'write()' 1 argüman bekler", span.line, span.col)); }
+                        let data = match self.eval_expr(&args[0])? {
+                            Value::Str(s) => s,
+                            other => other.to_string(),
+                        };
+                        let mut stream = s_arc.lock().map_err(|e| e.to_string())?;
+                        match stream.write(data.as_bytes()) {
+                            Ok(n) => {
+                                let _ = stream.flush();
+                                Ok(Value::Ok(Box::new(Value::Int(n as i64))))
+                            }
+                            Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                        }
+                    }
+                    Value::TcpStream(s_arc) if method == "read" => {
+                        if !args.is_empty() { return Err(format!("Hata [{}:{}]: 'read()' argüman beklemez", span.line, span.col)); }
+                        let mut stream = s_arc.lock().map_err(|e| e.to_string())?;
+                        let mut buf = [0u8; 4096];
+                        match stream.read(&mut buf) {
+                            Ok(n) => {
+                                let text = String::from_utf8_lossy(&buf[..n]).to_string();
+                                Ok(Value::Ok(Box::new(Value::Str(text))))
+                            }
+                            Err(e) => Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                        }
+                    }
+                    Value::TcpStream(s_arc) if method == "close" => {
+                        if !args.is_empty() { return Err(format!("Hata [{}:{}]: 'close()' argüman beklemez", span.line, span.col)); }
+                        let stream = s_arc.lock().map_err(|e| e.to_string())?;
+                        let _ = stream.shutdown(std::net::Shutdown::Both);
+                        Ok(Value::Void)
                     }
                     Value::Rc(inner, count) if method == "clone" => {
                         *count.lock().unwrap() += 1;

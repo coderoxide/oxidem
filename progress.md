@@ -7,7 +7,7 @@ Bu dosya, Rust tabanlı Oxide (`.ox`) programlama dili ve derleyici/yorumlayıc�
 ## 📊 Genel Durum
 - **Proje Adı:** Oxide (`.ox`)
 - **Geliştirme Dili:** Rust (2024 edition)
-- **Mevcut Sürüm:** v0.17.0 (Eşzamanlılık ve Çoklu İş Parçacığı thread::spawn/sleep, Mesajlaşma Kanalları channel/send/recv, Karşılıklı Dışlama Mutex<T>, Derleme Zamanı Sabitleri const, Standart Dosya Sistemi fs::, Sistem ve Çevre Değişkenleri env::, Akıllı İşaretçiler Box/Rc/RefCell, Target Build Dizin Mimarisi, oxide.lock Kilit Dosyası, oxide clean, Operator Overloading & Traits, Slices & Range Indexing, String Interpolation f"...", Tuples & Destructuring, Trait & Interface System, Option/Result & Try '?' Operator, Generics & Monomorphization, Closures, Arena Management, HIR Optimizer, Test Engine & oxide.toml)
+- **Mevcut Sürüm:** v0.18.0 (Ağ ve Soket Programlama TcpListener/TcpStream, Eşzamanlılık ve Çoklu İş Parçacığı thread::spawn/sleep, Mesajlaşma Kanalları channel/send/recv, Karşılıklı Dışlama Mutex<T>, Derleme Zamanı Sabitleri const, Standart Dosya Sistemi fs::, Sistem ve Çevre Değişkenleri env::, Akıllı İşaretçiler Box/Rc/RefCell, Target Build Dizin Mimarisi, oxide.lock Kilit Dosyası, oxide clean, Operator Overloading & Traits, Slices & Range Indexing, String Interpolation f"...", Tuples & Destructuring, Trait & Interface System, Option/Result & Try '?' Operator, Generics & Monomorphization, Closures, Arena Management, HIR Optimizer, Test Engine & oxide.toml)
 - **Bağımlılık Durumu:** Sıfır dış bağımlılık (Pure Rust Standard Library)
 - **Çalışma Modları:** Yorumlayıcı (`run`), Tip Denetleyici (`check`), Native GCC Derleyici (`build`), Token Dökücü (`tokens`), AST Dökücü (`ast`), HIR Dökücü (`hir`), REPL (`repl`)
 
@@ -332,9 +332,28 @@ Bu dosya, Rust tabanlı Oxide (`.ox`) programlama dili ve derleyici/yorumlayıc�
 
 ---
 
-### Aşama 22: Ağ & Soket Programlama (Network & Sockets: `TcpListener`, `TcpStream`, HTTP İstemcisi) (Sıradaki Hedef)
-- [ ] **TCP Sunucu Soketi (`net::TcpListener`):** Belirtilen portu dinleme (`TcpListener::bind("127.0.0.1:8080")`), gelen istemci bağlantılarını kabul etme (`listener.accept()`).
-- [ ] **TCP İstemci Soketi (`net::TcpStream`):** Uzak sunucuya bağlanma (`TcpStream::connect("...")`), veri gönderme (`stream.write(...)`) ve veri okuma (`stream.read(...)`).
-- [ ] **Native C Transpiler & Berkeley Sockets Entegrasyonu:** `<sys/socket.h>`, `<netinet/in.h>`, `<arpa/inet.h>` C runtime entegrasyonu.
+### Aşama 22: Ağ & Soket Programlama (Network & Sockets: `TcpListener`, `TcpStream`) (Tamamlandı)
+- [x] **TCP Sunucu Soketi (`net::TcpListener`):**
+  - Belirtilen IP ve port üzerinde dinleme başlatma (`TcpListener::bind("127.0.0.1:8080") -> Result<TcpListener, str>`).
+  - Gelen istemci bağlantılarını kabul etme (`listener.accept() -> Result<TcpStream, str>`).
+- [x] **TCP İstemci Soketi (`net::TcpStream`):**
+  - Uzak sunucuya TCP bağlantısı kurma (`TcpStream::connect("127.0.0.1:8080") -> Result<TcpStream, str>`).
+  - Veri gönderme (`stream.write(veri: str) -> Result<int, str>`).
+  - Veri okuma (`stream.read() -> Result<str, str>`).
+  - Bağlantıyı güvenli sonlandırma (`stream.close() -> void`).
+- [x] **Çoklu İş Parçacıklı Ağ Mimarisi:** `thread::spawn` ile sunucuyu arka planda çalıştırarak istemcilerle eşzamanlı haberleşme.
+- [x] **Native Berkeley Sockets Transpiler & GCC Entegrasyonu:**
+  - POSIX `<sys/socket.h>`, `<netinet/in.h>`, `<arpa/inet.h>` C runtime entegrasyonu.
+  - C seviyesinde `_ox_tcp_listener_bind`, `_ox_tcp_listener_accept`, `_ox_tcp_stream_connect`, `_ox_tcp_stream_write`, `_ox_tcp_stream_read`, `_ox_tcp_stream_close` fonksiyonları.
+  - GCC `-O2` seviyesinde optimize native binary üretimi.
+- [x] **Otomatik Entegrasyon Testi:** `test_network_and_tcp_sockets` ile 33/33 test başarıyla geçti.
+
+---
+
+### Aşama 23: HTTP Sunucusu / REST API & JSON Serileştirme (Sıradaki Hedef)
+- [ ] **HTTP Protokol Çözümleyici & İstek/Yanıt:** `http::Request` (metot, yol, başlıklar, gövde) ve `http::Response` (durum kodu, başlıklar, gövde).
+- [ ] **Yerleşik JSON Parser / Stringifier:** Nesneleri, dizileri ve struct'ları JSON metnine (`json::stringify`) ve JSON metnini veri tiplerine (`json::parse`) dönüştürme.
+- [ ] **Hafif REST API Web Sunucusu:** `http::Server` ile yönlendirme (routing), GET/POST endpoint'leri ve statik dosya sunumu.
+
 
 

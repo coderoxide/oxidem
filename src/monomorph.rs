@@ -22,6 +22,8 @@ pub fn mangle_type(ty: &Type) -> String {
         Type::Sender(inner) => format!("Sender__{}", mangle_type(inner)),
         Type::Receiver(inner) => format!("Receiver__{}", mangle_type(inner)),
         Type::Mutex(inner) => format!("Mutex__{}", mangle_type(inner)),
+        Type::TcpListener => "TcpListener".to_string(),
+        Type::TcpStream => "TcpStream".to_string(),
         Type::Tuple(types) => {
             let inner = types.iter().map(mangle_type).collect::<Vec<_>>().join("_");
             format!("tuple_{}", inner)
@@ -1181,6 +1183,8 @@ impl Monomorphizer {
                             }
                             Ok(Type::Void)
                         }
+                        "TcpListener::bind" | "net::TcpListener::bind" => Ok(Type::Result(Box::new(Type::TcpListener), Box::new(Type::Str))),
+                        "TcpStream::connect" | "net::TcpStream::connect" => Ok(Type::Result(Box::new(Type::TcpStream), Box::new(Type::Str))),
                         "len" | "to_int" => Ok(Type::Int),
                         "to_float" => Ok(Type::Float),
                         "to_char" => Ok(Type::Char),
@@ -1254,6 +1258,10 @@ impl Monomorphizer {
                         Type::Sender(_) if method == "send" => return Ok(Type::Result(Box::new(Type::Void), Box::new(Type::Str))),
                         Type::Receiver(inner) if method == "recv" => return Ok(Type::Result(inner, Box::new(Type::Str))),
                         Type::Mutex(inner) if method == "lock" => return Ok(Type::Ref { inner, is_mut: true }),
+                        Type::TcpListener if method == "accept" => return Ok(Type::Result(Box::new(Type::TcpStream), Box::new(Type::Str))),
+                        Type::TcpStream if method == "write" => return Ok(Type::Result(Box::new(Type::Int), Box::new(Type::Str))),
+                        Type::TcpStream if method == "read" => return Ok(Type::Result(Box::new(Type::Str), Box::new(Type::Str))),
+                        Type::TcpStream if method == "close" => return Ok(Type::Void),
                         _ => {}
                     }
                 }

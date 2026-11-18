@@ -26,6 +26,8 @@ pub enum Type {
     Sender(Box<Type>),
     Receiver(Box<Type>),
     Mutex(Box<Type>),
+    TcpListener,
+    TcpStream,
     Tuple(Vec<Type>),
     Ref {
         inner: Box<Type>,
@@ -68,6 +70,8 @@ impl std::fmt::Display for Type {
             Type::Sender(inner) => write!(f, "Sender<{}>", inner),
             Type::Receiver(inner) => write!(f, "Receiver<{}>", inner),
             Type::Mutex(inner) => write!(f, "Mutex<{}>", inner),
+            Type::TcpListener => write!(f, "TcpListener"),
+            Type::TcpStream => write!(f, "TcpStream"),
             Type::Tuple(types) => {
                 let inner = types.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", ");
                 write!(f, "({})", inner)

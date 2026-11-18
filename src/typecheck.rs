@@ -1318,6 +1318,26 @@ impl TypeChecker {
                         if !args.is_empty() { return Err(format!("Tip Hatası [{}:{}]: 'lock()' argüman beklemez", span.line, span.col)); }
                         return Ok(Type::Ref { inner, is_mut: true });
                     }
+                    Type::TcpListener if method == "accept" => {
+                        if !args.is_empty() { return Err(format!("Tip Hatası [{}:{}]: 'accept()' argüman beklemez", span.line, span.col)); }
+                        return Ok(Type::Result(Box::new(Type::TcpStream), Box::new(Type::Str)));
+                    }
+                    Type::TcpStream if method == "write" => {
+                        if args.len() != 1 { return Err(format!("Tip Hatası [{}:{}]: 'write' 1 argüman bekler", span.line, span.col)); }
+                        let arg_ty = self.check_expr(&args[0])?;
+                        if !self.are_types_compatible(&Type::Str, &arg_ty) {
+                            return Err(format!("Tip Hatası [{}:{}]: 'write' 'str' tipi beklerken '{}' verildi", span.line, span.col, arg_ty));
+                        }
+                        return Ok(Type::Result(Box::new(Type::Int), Box::new(Type::Str)));
+                    }
+                    Type::TcpStream if method == "read" => {
+                        if !args.is_empty() { return Err(format!("Tip Hatası [{}:{}]: 'read()' argüman beklemez", span.line, span.col)); }
+                        return Ok(Type::Result(Box::new(Type::Str), Box::new(Type::Str)));
+                    }
+                    Type::TcpStream if method == "close" => {
+                        if !args.is_empty() { return Err(format!("Tip Hatası [{}:{}]: 'close()' argüman beklemez", span.line, span.col)); }
+                        return Ok(Type::Void);
+                    }
                     Type::Box(ref inner) | Type::Rc(ref inner) => {
                         let mut curr_inner = (**inner).clone();
                         while let Type::Box(in_t) | Type::Rc(in_t) = curr_inner {
@@ -1387,6 +1407,26 @@ impl TypeChecker {
                         }
                         let inner_ty = self.check_expr(&args[0])?;
                         return Ok(Type::Mutex(Box::new(inner_ty)));
+                    }
+                    "TcpListener::bind" | "net::TcpListener::bind" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'TcpListener::bind' 1 argüman bekler: (addr: str)", span.line, span.col));
+                        }
+                        let addr_ty = self.check_expr(&args[0])?;
+                        if !self.are_types_compatible(&Type::Str, &addr_ty) {
+                            return Err(format!("Tip Hatası [{}:{}]: 'TcpListener::bind' adres parametresini 'str' bekler", span.line, span.col));
+                        }
+                        return Ok(Type::Result(Box::new(Type::TcpListener), Box::new(Type::Str)));
+                    }
+                    "TcpStream::connect" | "net::TcpStream::connect" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'TcpStream::connect' 1 argüman bekler: (addr: str)", span.line, span.col));
+                        }
+                        let addr_ty = self.check_expr(&args[0])?;
+                        if !self.are_types_compatible(&Type::Str, &addr_ty) {
+                            return Err(format!("Tip Hatası [{}:{}]: 'TcpStream::connect' adres parametresini 'str' bekler", span.line, span.col));
+                        }
+                        return Ok(Type::Result(Box::new(Type::TcpStream), Box::new(Type::Str)));
                     }
                     "Box::new" => {
                         if args.len() != 1 {

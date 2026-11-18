@@ -782,4 +782,50 @@ fn test_concurrency_and_threads() {
     let _ = std::fs::remove_file(format!("{}.c", bin_path));
 }
 
+#[test]
+fn test_network_and_tcp_sockets() {
+    // 1. check
+    let check_status = Command::new("cargo")
+        .args(["run", "--quiet", "--", "check", "examples/network_demo.ox"])
+        .status()
+        .expect("cargo run check failed");
+    assert!(check_status.success());
 
+    // 2. run (interpreter)
+    let run_output = Command::new("cargo")
+        .args(["run", "--quiet", "--", "run", "examples/network_demo.ox"])
+        .output()
+        .expect("cargo run run failed");
+    assert!(run_output.status.success());
+    let run_stdout = String::from_utf8_lossy(&run_output.stdout);
+
+    // 3. build (GCC native)
+    let bin_path = "examples/test_native_network_bin";
+    let build_status = Command::new("cargo")
+        .args(["run", "--quiet", "--", "build", "examples/network_demo.ox", "-o", bin_path])
+        .status()
+        .expect("cargo run build failed");
+    assert!(build_status.success());
+
+    // 4. execute native binary
+    let exec_output = Command::new(format!("./{}", bin_path))
+        .output()
+        .expect("failed to execute native binary");
+    assert!(exec_output.status.success());
+    let exec_stdout = String::from_utf8_lossy(&exec_output.stdout);
+
+    // 5. Parity & content assertion
+    assert!(run_stdout.contains("Sunucu Alinan Veri: PING: Merhaba Sunucu!"));
+    assert!(run_stdout.contains("Istemci Gonderilen Bayt Sayisi: 21"));
+    assert!(run_stdout.contains("Istemci Alinan Yanit: PONG: Merhaba Istemci!"));
+    assert!(run_stdout.contains("=== Tum Ag & Soket Testleri Basariyla Tamamlandi! ==="));
+
+    assert!(exec_stdout.contains("Sunucu Alinan Veri: PING: Merhaba Sunucu!"));
+    assert!(exec_stdout.contains("Istemci Gonderilen Bayt Sayisi: 21"));
+    assert!(exec_stdout.contains("Istemci Alinan Yanit: PONG: Merhaba Istemci!"));
+    assert!(exec_stdout.contains("=== Tum Ag & Soket Testleri Basariyla Tamamlandi! ==="));
+
+    // Cleanup
+    let _ = std::fs::remove_file(bin_path);
+    let _ = std::fs::remove_file(format!("{}.c", bin_path));
+}

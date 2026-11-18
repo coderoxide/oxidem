@@ -1230,6 +1230,73 @@ println("Sayaç:", guncel); // 10
 * GCC derlemesi otomatik olarak `-pthread -lm -O2` bayraklarıyla yürütülür.
 * Yorumlayıcı (`oxide run`) ve GCC native binary (`oxide build`) arasında %100 çıktı ve davranış uyumu (parity) garanti edilir.
 
+---
+
+## 25. Ağ ve Soket Programlama (Network & Sockets: `TcpListener`, `TcpStream`)
+
+Oxide (v0.18.0+), yerel işletim sistemi soketleri (Berkeley Sockets) üzerinde çalışan düşük seviyeli, yüksek performanslı ve güvenli ağ programlama API'si sunar.
+
+### 25.1. TCP Sunucu (`TcpListener`)
+`TcpListener::bind(adres)` fonksiyonu ile belirtilen IP ve port üzerinde dinleme başlatılır:
+* `listener.accept() -> Result<TcpStream, str>`: Gelen yeni bir istemci bağlantısını kabul eder ve çift yönlü haberleşme sağlayacak bir `TcpStream` döner.
+
+```rust
+let listener = TcpListener::bind("127.0.0.1:8080")?;
+println("Sunucu 8080 portunda dinliyor...");
+
+let stream = listener.accept()?;
+println("İstemci bağlandı!");
+```
+
+### 25.2. TCP İstemci (`TcpStream`)
+`TcpStream::connect(adres)` fonksiyonu ile hedef TCP sunucusuna bağlanılır:
+* `stream.write(veri) -> Result<int, str>`: Sokete metin veya bayt verisi yazar ve gönderilen bayt sayısını döner.
+* `stream.read() -> Result<str, str>`: Soketten gelen veriyi okur ve metin olarak döner.
+* `stream.close() -> void`: Soket bağlantısını sonlandırır ve kaynakları serbest bırakır.
+
+```rust
+let stream = TcpStream::connect("127.0.0.1:8080")?;
+stream.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")?;
+
+let yanit = stream.read()?;
+println("Sunucu yanıtı:", yanit);
+stream.close();
+```
+
+### 25.3. Eşzamanlı Sunucu Örneği (Multi-Threaded Server & Client)
+İş parçacıkları (`thread::spawn`) ile arka planda çalışan bir sunucu kurarak istemci ile haberleşme:
+
+```rust
+// Arka planda sunucu başlat
+let server_handle = thread::spawn(|| {
+    let listener = TcpListener::bind("127.0.0.1:4545").unwrap();
+    let client = listener.accept().unwrap();
+    let mesaj = client.read().unwrap();
+    println("Sunucu aldı:", mesaj);
+    client.write("PONG").unwrap();
+    client.close();
+    0
+});
+
+thread::sleep(100);
+
+// İstemci bağlanıp veri göndersin
+let client = TcpStream::connect("127.0.0.1:4545").unwrap();
+client.write("PING").unwrap();
+let yanit = client.read().unwrap();
+println("İstemci aldı:", yanit);
+client.close();
+
+server_handle.join().unwrap();
+```
+
+### 25.4. Native Berkeley Sockets C Transpiler & GCC Optimizasyonu
+* Oxide Yorumlayıcısı: Rust `std::net::{TcpListener, TcpStream}` üzerinde sıfır ek yükle çalışır.
+* Native C Binary (`oxide build`): POSIX `<sys/socket.h>`, `<netinet/in.h>`, `<arpa/inet.h>` başlıklarını kullanarak doğrudan C soket yapılarına transpile edilir.
+* Port çözümleme (`inet_pton`, `htons`, `sockaddr_in`), hata güvenliği ve tampon yönetimi GCC `-O2` seviyesinde optimize edilir.
+* Yorumlayıcı (`oxide run`) ve GCC native binary (`oxide build`) arasında %100 birebir davranış ve çıktı uyumu garanti edilir.
+
+
 
 
 

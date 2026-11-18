@@ -592,6 +592,10 @@ impl Parser {
                             type_args,
                         })
                     }
+                } else if name == "TcpListener" {
+                    Ok(Type::TcpListener)
+                } else if name == "TcpStream" {
+                    Ok(Type::TcpStream)
                 } else {
                     Ok(Type::Named(name.clone()))
                 }
