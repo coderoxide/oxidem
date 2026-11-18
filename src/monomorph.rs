@@ -449,6 +449,12 @@ impl Monomorphizer {
             }
             Stmt::Return(None, _) => {}
             Stmt::Break(_) | Stmt::Continue(_) => {}
+            Stmt::Const(c) => {
+                c.ty = normalize_type(&c.ty);
+                self.ensure_type_specialized(&c.ty)?;
+                self.monomorphize_expr(&mut c.value, env)?;
+                env.insert(c.name.clone(), c.ty.clone());
+            }
             Stmt::Expr(expr) => {
                 self.monomorphize_expr(expr, env)?;
             }

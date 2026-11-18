@@ -153,6 +153,14 @@ impl CodegenC {
                     "to_float" => Type::Float,
                     "to_char" => Type::Char,
                     "to_u8" | "to_byte" => Type::U8,
+                    "fs::read_to_string" | "read_to_string" => Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+                    "fs::write" => Type::Result(Box::new(Type::Void), Box::new(Type::Str)),
+                    "fs::remove_file" | "remove_file" => Type::Result(Box::new(Type::Void), Box::new(Type::Str)),
+                    "fs::exists" | "file_exists" => Type::Bool,
+                    "fs::create_dir" | "create_dir" => Type::Result(Box::new(Type::Void), Box::new(Type::Str)),
+                    "env::args" => Type::Array(Box::new(Type::Str)),
+                    "env::var" => Type::Option(Box::new(Type::Str)),
+                    "env::current_dir" | "current_dir" => Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
                     _ => self.fn_ret_types.get(callee).cloned().unwrap_or(Type::Void),
                 }
             }
@@ -576,6 +584,8 @@ impl CodegenC {
         self.write_line("#include <string.h>");
         self.write_line("#include <assert.h>");
         self.write_line("#include <math.h>");
+        self.write_line("#include <unistd.h>");
+        self.write_line("#include <sys/stat.h>");
         self.write_line("");
 
         // Runtime helpers
@@ -1145,6 +1155,72 @@ impl CodegenC {
         self.write_line("static inline char* _ox_to_str_option(_OxOption opt) { if (opt.is_some) { char* buf = _ox_arena_alloc(64); snprintf(buf, 64, \"Some(%ld)\", (long)opt.val); return buf; } else { return \"None\"; } }");
         self.write_line("static inline char* _ox_to_str_result(_OxResult res) { if (res.is_ok) { char* buf = _ox_arena_alloc(64); snprintf(buf, 64, \"Ok(%ld)\", (long)res.ok); return buf; } else { char* buf = _ox_arena_alloc(64); snprintf(buf, 64, \"Err(%s)\", (const char*)res.err); return buf; } }");
         self.write_line("");
+        self.write_line("static inline _OxResult _ox_fs_read_to_string(const char* path) {");
+        self.write_line("    if (!path) return _ox_err((int64_t)(uintptr_t)\"Gecersiz dosya yolu\");");
+        self.write_line("    FILE* f = fopen(path, \"rb\");");
+        self.write_line("    if (!f) return _ox_err((int64_t)(uintptr_t)_ox_str_concat(\"Dosya acilamadi: \", path));");
+        self.write_line("    fseek(f, 0, SEEK_END);");
+        self.write_line("    long sz = ftell(f);");
+        self.write_line("    fseek(f, 0, SEEK_SET);");
+        self.write_line("    if (sz < 0) { fclose(f); return _ox_err((int64_t)(uintptr_t)\"Dosya boyutu alinamadi\"); }");
+        self.write_line("    char* buf = _ox_arena_alloc(sz + 1);");
+        self.write_line("    size_t rd = fread(buf, 1, sz, f);");
+        self.write_line("    buf[rd] = '\\0';");
+        self.write_line("    fclose(f);");
+        self.write_line("    return _ox_ok((int64_t)(uintptr_t)buf);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxResult _ox_fs_write(const char* path, const char* content) {");
+        self.write_line("    if (!path) return _ox_err((int64_t)(uintptr_t)\"Gecersiz dosya yolu\");");
+        self.write_line("    FILE* f = fopen(path, \"wb\");");
+        self.write_line("    if (!f) return _ox_err((int64_t)(uintptr_t)_ox_str_concat(\"Dosya yazilamadi: \", path));");
+        self.write_line("    if (content) fputs(content, f);");
+        self.write_line("    fclose(f);");
+        self.write_line("    return _ox_ok(0);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxResult _ox_fs_remove_file(const char* path) {");
+        self.write_line("    if (!path) return _ox_err((int64_t)(uintptr_t)\"Gecersiz dosya yolu\");");
+        self.write_line("    if (remove(path) == 0) return _ox_ok(0);");
+        self.write_line("    return _ox_err((int64_t)(uintptr_t)_ox_str_concat(\"Dosya silinemedi: \", path));");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline bool _ox_fs_exists(const char* path) {");
+        self.write_line("    if (!path) return false;");
+        self.write_line("    return access(path, F_OK) == 0;");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxResult _ox_fs_create_dir(const char* path) {");
+        self.write_line("    if (!path) return _ox_err((int64_t)(uintptr_t)\"Gecersiz dizin yolu\");");
+        self.write_line("    if (mkdir(path, 0755) == 0) return _ox_ok(0);");
+        self.write_line("    return _ox_err((int64_t)(uintptr_t)_ox_str_concat(\"Dizin olusturulamadi: \", path));");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxOption _ox_env_var(const char* key) {");
+        self.write_line("    if (!key) return _ox_none();");
+        self.write_line("    const char* v = getenv(key);");
+        self.write_line("    if (v) return _ox_some((int64_t)(uintptr_t)v);");
+        self.write_line("    return _ox_none();");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxResult _ox_env_current_dir(void) {");
+        self.write_line("    char buf[1024];");
+        self.write_line("    if (getcwd(buf, sizeof(buf))) {");
+        self.write_line("        char* res = _ox_arena_alloc(strlen(buf) + 1);");
+        self.write_line("        strcpy(res, buf);");
+        self.write_line("        return _ox_ok((int64_t)(uintptr_t)res);");
+        self.write_line("    }");
+        self.write_line("    return _ox_err((int64_t)(uintptr_t)\"Mevcut dizin alinamadi\");");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline int64_t* _ox_env_args(void) {");
+        self.write_line("    int64_t* a = _ox_array_create(_ox_argc);");
+        self.write_line("    for (int i = 0; i < _ox_argc; i++) {");
+        self.write_line("        a[i] = (int64_t)(uintptr_t)_ox_argv[i];");
+        self.write_line("    }");
+        self.write_line("    return a;");
+        self.write_line("}");
+        self.write_line("");
 
         // Tuple type declarations
         for tuple_tys in &self.tuples.clone() {
@@ -1268,6 +1344,17 @@ impl CodegenC {
                 self.compile_struct(s);
             }
         }
+
+        // Global Constants
+        self.write_line("/* Global Constants */");
+        for item in &program.items {
+            if let Item::Const(c) = item {
+                let val_str = self.compile_expr(&c.value);
+                self.write_line(&format!("#define {} ({})", c.name, val_str));
+                self.var_ox_types.insert(c.name.clone(), c.ty.clone());
+            }
+        }
+        self.write_line("");
 
         // Function prototypes
         self.write_line("/* Function Prototypes */");
@@ -1463,6 +1550,12 @@ impl CodegenC {
                 } else {
                     self.write_line(&format!("{} {};", c_type, name));
                 }
+            }
+            Stmt::Const(c) => {
+                let c_ty = self.to_c_type(&c.ty);
+                let val = self.compile_expr(&c.value);
+                self.var_ox_types.insert(c.name.clone(), c.ty.clone());
+                self.write_line(&format!("const {} {} = {};", c_ty, c.name, val));
             }
             Stmt::LetTuple { elements, ty, init, .. } => {
                 let inferred_ty = init.as_ref().map(|e| self.infer_expr_type(e));
@@ -2038,6 +2131,14 @@ impl CodegenC {
                     "replace" => format!("_ox_str_replace(_ox_to_str({}), _ox_to_str({}), _ox_to_str({}))", self.compile_expr(&args[0]), self.compile_expr(&args[1]), self.compile_expr(&args[2])),
                     "char_at" => format!("_ox_char_at(_ox_to_str({}), {})", self.compile_expr(&args[0]), self.compile_expr(&args[1])),
                     "args" => "_ox_args()".to_string(),
+                    "env::args" => "_ox_env_args()".to_string(),
+                    "env::var" => format!("_ox_env_var({})", self.compile_expr(&args[0])),
+                    "env::current_dir" | "current_dir" => "_ox_env_current_dir()".to_string(),
+                    "fs::read_to_string" | "read_to_string" => format!("_ox_fs_read_to_string({})", self.compile_expr(&args[0])),
+                    "fs::write" => format!("_ox_fs_write({}, {})", self.compile_expr(&args[0]), self.compile_expr(&args[1])),
+                    "fs::remove_file" | "remove_file" => format!("_ox_fs_remove_file({})", self.compile_expr(&args[0])),
+                    "fs::exists" | "file_exists" => format!("_ox_fs_exists({})", self.compile_expr(&args[0])),
+                    "fs::create_dir" | "create_dir" => format!("_ox_fs_create_dir({})", self.compile_expr(&args[0])),
                     "get_env" => format!("_ox_get_env({})", self.compile_expr(&args[0])),
                     "exit" => format!("exit((int)({}))", self.compile_expr(&args[0])),
                     "map_new" => "_ox_map_new()".to_string(),

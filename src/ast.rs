@@ -348,6 +348,7 @@ pub enum Stmt {
     Break(Span),
     Continue(Span),
     Return(Option<Expr>, Span),
+    Const(ConstDef),
     Expr(Expr),
 }
 
@@ -433,6 +434,14 @@ pub struct EnumDef {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ConstDef {
+    pub name: String,
+    pub ty: Type,
+    pub value: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExternFn {
     pub name: String,
     pub params: Vec<Param>,
@@ -451,6 +460,7 @@ pub struct ExternBlock {
 pub enum Item {
     Import(String, Span),
     Extern(ExternBlock),
+    Const(ConstDef),
     Function(Function),
     Struct(StructDef),
     Impl(ImplBlock),

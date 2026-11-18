@@ -1079,6 +1079,89 @@ println("Güncel değer:", *cell.borrow()); // 999
 * Özyinelemeli `struct Node { next: Option<Box<Node>> }` yapıları için C derleyicisinde döngüsel bağımlılık hatası oluşmaması amacıyla tüm struct tipleri `typedef struct Node Node;` şeklinde önceden bildirilir (Forward Declarations).
 * Hem yorumlayıcı hem de GCC `-O2` çıktısı %100 birebir uyumludur.
 
+---
+
+## 23. Derleme Zamanı Sabitleri (`const`) & Standart Dosya/Dizin Sistemi (`fs::`, `env::`)
+
+Oxide, derleme anında çözülen değişmez sabitler ile modern sistem programlamanın temel ihtiyacı olan güvenli dosya ve ortam etkileşim API'lerine sahiptir.
+
+### 23.1. `const` Sabitleri (Compile-Time Constants)
+`const` ifadeleri derleme zamanında çözümlenir (compile-time evaluation) ve program boyunca hiçbir çalışma zamanı ek yükü olmadan inlined edilir.
+* Aritmetik (`+`, `-`, `*`, `/`, `%`), mantıksal (`!`, `&&`, `||`), karşılaştırma ve metin birleştirme ifadelerini derleme anında hesaplar.
+* Hem dosya seviyesinde (global) hem de fonksiyon/blok içinde tanımlanabilir.
+
+```rust
+// Global derleme zamanı sabitleri
+const BUFFER_SIZE: int = 1024 * 4;
+const PI: float = 3.14159;
+const APP_NAME: str = "OxideFS";
+const GREETING: str = APP_NAME + " Sistem Araci";
+
+fn main() {
+    // Fonksiyon içi yerel sabit
+    const CARPAN: int = 10 + 2;
+    let sonuc = BUFFER_SIZE / CARPAN; // 341
+    println("Hesaplanan:", sonuc);
+}
+```
+
+### 23.2. Dosya Sistemi API'si (`fs::`)
+Rust'ın `std::fs` tasarımına paralel olarak dosya işlemleri güvenli `Result` ve `Option` tipleriyle yönetilir:
+* `fs::write(yol, icerik) -> Result<void, str>`: Dosyaya içerik yazar.
+* `fs::read_to_string(yol) -> Result<str, str>`: Dosya içeriğini metin olarak okur.
+* `fs::exists(yol) -> bool`: Dosyanın veya dizinin var olup olmadığını kontrol eder.
+* `fs::remove_file(yol) -> Result<void, str>`: Belirtilen dosyayı siler.
+* `fs::create_dir(yol) -> Result<void, str>`: Yeni bir dizin oluşturur.
+
+```rust
+let yol = "veri.txt";
+
+// Dosya yazma
+let yaz_sonuc = fs::write(yol, "Oxide dosya sistemi testi");
+if yaz_sonuc.is_ok() {
+    println("Dosya başarıyla yazıldı!");
+}
+
+// Dosya okuma & Desen eşleme
+match fs::read_to_string(yol) {
+    Ok(icerik) => println("İçerik:", icerik),
+    Err(hata) => println("Okuma hatası:", hata),
+}
+
+// Varlık kontrolü ve silme
+if fs::exists(yol) {
+    fs::remove_file(yol);
+}
+```
+
+### 23.3. Sistem ve Çevre Değişkenleri API'si (`env::`)
+* `env::args() -> [str]`: Komut satırı argümanlarını dinamik dizi olarak döner.
+* `env::var(anahtar) -> Option<str>`: Sistem çevre değişkenini okur; değişken tanımlıysa `Some(deger)`, yoksa `None` döner.
+* `env::current_dir() -> Result<str, str>`: Uygulamanın aktif çalışma dizinini döner.
+
+```rust
+// Komut satırı argümanları
+let argumanlar = env::args();
+println("Argüman sayısı:", len(argumanlar));
+
+// Çevre değişkeni kontrolü
+match env::var("PATH") {
+    Some(yol) => println("PATH bulundu"),
+    None => println("PATH bulunamadı"),
+}
+
+// Çalışma dizini
+let pwd = env::current_dir()?;
+println("Aktif dizin:", pwd);
+```
+
+### 23.4. Native C Kod Üretimi & GCC Optimizasyonu
+* `const` ifadeleri C kodunda GNU C `#define` sabitleri olarak üretilir ve tam tip güvenliği ile inlined edilir.
+* Dosya ve ortam API'leri C11 / POSIX standart kütüphanesine (`fopen`, `fread`, `fwrite`, `fclose`, `remove`, `access`, `mkdir`, `getenv`, `getcwd`) doğrudan transpile edilir.
+* C seviyesinde `int main(int argc, char** argv)` argümanları otomatik yakalanıp `env::args()` fonksiyonuna aktarılır.
+* Yorumlayıcı (`oxide run`) ve Native Binary (`oxide build`) arasında %100 birebir davranış ve çıktı uyumu sağlanır.
+
+
 
 
 

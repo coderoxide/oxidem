@@ -209,6 +209,7 @@ pub struct Interpreter {
     structs: HashMap<String, StructDef>,
     methods: HashMap<String, HashMap<String, Function>>,
     enums: HashMap<String, EnumDef>,
+    constants: HashMap<String, Value>,
     env: Environment,
     early_return: Option<Value>,
 }
@@ -220,6 +221,7 @@ impl Interpreter {
             structs: HashMap::new(),
             methods: HashMap::new(),
             enums: HashMap::new(),
+            constants: HashMap::new(),
             env: Environment::new(),
             early_return: None,
         }
@@ -257,6 +259,11 @@ impl Interpreter {
                 }
                 Item::Import(..) => {}
                 Item::Trait(..) => {}
+                Item::Const(c) => {
+                    let val = self.eval_expr(&c.value).unwrap_or(Value::Void);
+                    self.constants.insert(c.name.clone(), val.clone());
+                    self.env.declare(c.name, val, false);
+                }
             }
         }
     }
@@ -429,6 +436,95 @@ impl Interpreter {
                         }
                     }
                     _ => return Err(format!("Hata [{}:{}]: 'write_file' str dosya yolu ve str içerik bekler", span.line, span.col)),
+                }
+            }
+            "fs::read_to_string" | "read_to_string" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'fs::read_to_string' 1 argüman bekler", span.line, span.col));
+                }
+                match &args[0] {
+                    Value::Str(path) => {
+                        match std::fs::read_to_string(path) {
+                            Ok(content) => return Ok(Value::Ok(Box::new(Value::Str(content)))),
+                            Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                        }
+                    }
+                    _ => return Err(format!("Hata [{}:{}]: 'fs::read_to_string' dosya yolunu str olarak bekler", span.line, span.col)),
+                }
+            }
+            "fs::write" => {
+                if args.len() != 2 {
+                    return Err(format!("Hata [{}:{}]: 'fs::write' 2 argüman bekler", span.line, span.col));
+                }
+                match (&args[0], &args[1]) {
+                    (Value::Str(path), Value::Str(content)) => {
+                        match std::fs::write(path, content) {
+                            Ok(()) => return Ok(Value::Ok(Box::new(Value::Void))),
+                            Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                        }
+                    }
+                    _ => return Err(format!("Hata [{}:{}]: 'fs::write' str yol ve str içerik bekler", span.line, span.col)),
+                }
+            }
+            "fs::remove_file" | "remove_file" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'fs::remove_file' 1 argüman bekler", span.line, span.col));
+                }
+                match &args[0] {
+                    Value::Str(path) => {
+                        match std::fs::remove_file(path) {
+                            Ok(()) => return Ok(Value::Ok(Box::new(Value::Void))),
+                            Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                        }
+                    }
+                    _ => return Err(format!("Hata [{}:{}]: 'fs::remove_file' str yol bekler", span.line, span.col)),
+                }
+            }
+            "fs::exists" | "file_exists" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'fs::exists' 1 argüman bekler", span.line, span.col));
+                }
+                match &args[0] {
+                    Value::Str(path) => return Ok(Value::Bool(std::path::Path::new(path).exists())),
+                    _ => return Err(format!("Hata [{}:{}]: 'fs::exists' str yol bekler", span.line, span.col)),
+                }
+            }
+            "fs::create_dir" | "create_dir" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'fs::create_dir' 1 argüman bekler", span.line, span.col));
+                }
+                match &args[0] {
+                    Value::Str(path) => {
+                        match std::fs::create_dir_all(path) {
+                            Ok(()) => return Ok(Value::Ok(Box::new(Value::Void))),
+                            Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                        }
+                    }
+                    _ => return Err(format!("Hata [{}:{}]: 'fs::create_dir' str yol bekler", span.line, span.col)),
+                }
+            }
+            "env::args" => {
+                let args_vec: Vec<Value> = std::env::args().map(Value::Str).collect();
+                return Ok(Value::Array(Rc::new(RefCell::new(args_vec))));
+            }
+            "env::var" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'env::var' 1 argüman bekler", span.line, span.col));
+                }
+                match &args[0] {
+                    Value::Str(key) => {
+                        match std::env::var(key) {
+                            Ok(val) => return Ok(Value::Some(Box::new(Value::Str(val)))),
+                            Err(_) => return Ok(Value::None),
+                        }
+                    }
+                    _ => return Err(format!("Hata [{}:{}]: 'env::var' str anahtar bekler", span.line, span.col)),
+                }
+            }
+            "env::current_dir" | "current_dir" => {
+                match std::env::current_dir() {
+                    Ok(p) => return Ok(Value::Ok(Box::new(Value::Str(p.to_string_lossy().to_string())))),
+                    Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
                 }
             }
             "read_line" => {
@@ -835,6 +931,15 @@ impl Interpreter {
                 self.env.declare(name.clone(), val, *is_mut);
                 Ok(ControlFlow::Normal(Value::Void))
             }
+            Stmt::Const(c) => {
+                let val = self.eval_expr(&c.value)?;
+                if let Some(early) = self.early_return.take() {
+                    return Ok(ControlFlow::Return(early));
+                }
+                self.constants.insert(c.name.clone(), val.clone());
+                self.env.declare(c.name.clone(), val, false);
+                Ok(ControlFlow::Normal(Value::Void))
+            }
             Stmt::LetTuple { elements, init, span, .. } => {
                 let init_val = if let Some(expr) = init {
                     let v = self.eval_expr(expr)?;
@@ -1009,6 +1114,12 @@ impl Interpreter {
             Expr::Ident(name, span) => {
                 if name == "None" {
                     return Ok(Value::None);
+                }
+                if let Ok(v) = self.env.get(name, *span) {
+                    return Ok(v);
+                }
+                if let Some(c_val) = self.constants.get(name) {
+                    return Ok(c_val.clone());
                 }
                 self.env.get(name, *span)
             }

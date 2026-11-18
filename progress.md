@@ -7,7 +7,7 @@ Bu dosya, Rust tabanlı Oxide (`.ox`) programlama dili ve derleyici/yorumlayıc�
 ## 📊 Genel Durum
 - **Proje Adı:** Oxide (`.ox`)
 - **Geliştirme Dili:** Rust (2024 edition)
-- **Mevcut Sürüm:** v0.15.0 (Akıllı İşaretçiler & Özyinelemeli Yapılar Box/Rc/RefCell, Target Build Dizin Mimarisi, oxide.lock Kilit Dosyası, oxide clean, Operator Overloading & Traits, Slices & Range Indexing, String Interpolation f"...", Tuples & Destructuring, Trait & Interface System, Option/Result & Try '?' Operator, Generics & Monomorphization, Closures, Arena Management, HIR Optimizer, Test Engine & oxide.toml)
+- **Mevcut Sürüm:** v0.16.0 (Derleme Zamanı Sabitleri const, Standart Dosya Sistemi fs::, Sistem ve Çevre Değişkenleri env::, Akıllı İşaretçiler Box/Rc/RefCell, Target Build Dizin Mimarisi, oxide.lock Kilit Dosyası, oxide clean, Operator Overloading & Traits, Slices & Range Indexing, String Interpolation f"...", Tuples & Destructuring, Trait & Interface System, Option/Result & Try '?' Operator, Generics & Monomorphization, Closures, Arena Management, HIR Optimizer, Test Engine & oxide.toml)
 - **Bağımlılık Durumu:** Sıfır dış bağımlılık (Pure Rust Standard Library)
 - **Çalışma Modları:** Yorumlayıcı (`run`), Tip Denetleyici (`check`), Native GCC Derleyici (`build`), Token Dökücü (`tokens`), AST Dökücü (`ast`), HIR Dökücü (`hir`), REPL (`repl`)
 
@@ -304,9 +304,28 @@ Bu dosya, Rust tabanlı Oxide (`.ox`) programlama dili ve derleyici/yorumlayıc�
 
 ---
 
-### Aşama 20: Derleme Zamanı Sabitleri & Standart Dosya/Dizin Sistemi (`const` Evaluator, `std::fs`, `std::env`) (Sıradaki Hedef)
-- [ ] **`const` İfadeleri & Derleme Zamanı Hesaplama:** `const MAX_BUFFER: int = 1024 * 64;` şeklinde derleme zamanında çözülen ve inlined edilen sabitler.
-- [ ] **Standart Dosya Sistemi Modülü (`std::fs`):** `read_to_string(path)`, `write(path, content)`, `remove_file(path)`, `exists(path)` fonksiyonları.
-- [ ] **Dizin İşlemleri & Çevre Değişkenleri (`std::dir`, `std::env`):** Dizin listeleme, dizin oluşturma, çalışma dizini (`current_dir`), argümanlar (`args()`) ve çevre değişkenleri (`var(key)`).
-- [ ] **Native C Transpiler & GCC Entegrasyonu:** POSIX/C standart kütüphane dosya I/O çağrıları ile yorumlayıcı arasında %100 birebir davranış uyumu.
+### Aşama 20: Derleme Zamanı Sabitleri & Standart Dosya/Dizin Sistemi (`const` Evaluator, `std::fs`, `std::env`) (Tamamlandı)
+- [x] **`const` İfadeleri & Derleme Zamanı Hesaplama:** `const BUFFER_SIZE: int = 1024 * 4;` ve `const GREETING: str = APP_NAME + " Sistem Araci";` şeklinde derleme zamanında tip denetleyicisi (`eval_const_expr`) tarafından çözülen ve inlined edilen sabitler.
+- [x] **Blok İçi Yerel `const` Desteği:** Fonksiyon veya blok gövdesinde `const CARPAN: int = 10 + 2;` şeklinde yerel sabit tanımlayabilme.
+- [x] **Standart Dosya Sistemi Modülü (`fs::`):**
+  - `fs::write(yol, icerik) -> Result<void, str>` (dosya oluşturma/yazma).
+  - `fs::read_to_string(yol) -> Result<str, str>` (dosyadan metin okuma).
+  - `fs::exists(yol) -> bool` (dosya/dizin varlık kontrolü).
+  - `fs::remove_file(yol) -> Result<void, str>` (dosya silme).
+  - `fs::create_dir(yol) -> Result<void, str>` (klasör oluşturma).
+- [x] **Sistem & Çevre Değişkenleri (`env::`):**
+  - `env::args() -> [str]` (komut satırı argümanları).
+  - `env::var(anahtar) -> Option<str>` (çevre değişkeni okuma).
+  - `env::current_dir() -> Result<str, str>` (çalışma dizini sorgulama).
+- [x] **Native C Transpiler & GCC Entegrasyonu:** POSIX/C standart kütüphane dosya ve ortam fonksiyonları (`fopen`, `fread`, `fwrite`, `fclose`, `remove`, `access`, `mkdir`, `getenv`, `getcwd`) ile yorumlayıcı arasında %100 birebir davranış uyumu.
+- [x] **Otomatik Entegrasyon Testi:** `test_const_and_filesystem` ile 31/31 test başarıyla geçti.
+
+---
+
+### Aşama 21: Eşzamanlılık & İş Parçacıkları (Concurrency: `thread::spawn`, `channel`, `Mutex<T>`) (Sıradaki Hedef)
+- [ ] **`thread::spawn` ile İş Parçacığı Başlatma:** Fonksiyon veya closure alarak arka planda bağımsız çalışan thread desteği (`thread::spawn(|| { ... })`).
+- [ ] **Mesajlaşma Kanalları (`channel`):** Thread'ler arası güvenli veri iletimi sağlayan Sender/Receiver kuyruğu (`let (tx, rx) = channel();`).
+- [ ] **`Mutex<T>` ile Güvenli Paylaşımlı Bellek:** Thread'ler arasında güvenli veri paylaşımı ve kilit yönetimi (`mutex.lock()`).
+- [ ] **Native C Transpiler & POSIX pthreads Entegrasyonu:** POSIX Threads (`pthread_create`, `pthread_join`, `pthread_mutex`) ile C derleyicisi uyumu.
+
 

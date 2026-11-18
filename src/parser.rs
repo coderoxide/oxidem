@@ -71,6 +71,8 @@ impl Parser {
                 };
                 self.expect(TokenKind::Semicolon)?;
                 items.push(Item::Import(path, import_span));
+            } else if self.check(&TokenKind::Const) {
+                items.push(Item::Const(self.parse_const()?));
             } else if self.check(&TokenKind::Fn) {
                 items.push(Item::Function(self.parse_function()?));
             } else if self.check(&TokenKind::Struct) {
@@ -86,7 +88,7 @@ impl Parser {
             } else {
                 let token = self.peek();
                 return Err(format!(
-                    "Hata [{}:{}]: Dosya seviyesinde yalnızca 'import', 'extern', 'fn', 'struct', 'impl', 'trait' veya 'enum' bildirimlerine izin verilir. Bulunan: {:?}",
+                    "Hata [{}:{}]: Dosya seviyesinde yalnızca 'import', 'const', 'extern', 'fn', 'struct', 'impl', 'trait' veya 'enum' bildirimlerine izin verilir. Bulunan: {:?}",
                     token.span.line, token.span.col, token.kind
                 ));
             }
@@ -589,6 +591,8 @@ impl Parser {
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
             if self.check(&TokenKind::Let) {
                 stmts.push(self.parse_let_stmt()?);
+            } else if self.check(&TokenKind::Const) {
+                stmts.push(Stmt::Const(self.parse_const()?));
             } else if self.check(&TokenKind::While) {
                 stmts.push(self.parse_while_stmt()?);
             } else if self.check(&TokenKind::For) {
@@ -636,6 +640,22 @@ impl Parser {
             stmts,
             trailing_expr,
             span: lbrace.span,
+        })
+    }
+
+    fn parse_const(&mut self) -> Result<ConstDef, String> {
+        let const_tok = self.expect(TokenKind::Const)?;
+        let name = self.expect_ident()?;
+        self.expect(TokenKind::Colon)?;
+        let ty = self.parse_type()?;
+        self.expect(TokenKind::Eq)?;
+        let value = self.parse_expression(0)?;
+        self.expect(TokenKind::Semicolon)?;
+        Ok(ConstDef {
+            name,
+            ty,
+            value,
+            span: const_tok.span,
         })
     }
 

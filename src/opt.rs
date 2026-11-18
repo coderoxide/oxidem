@@ -243,6 +243,9 @@ pub fn optimize_ast_block(block: &mut Block) {
             Stmt::Return(Some(e), ..) => {
                 optimize_ast_expr(e);
             }
+            Stmt::Const(c) => {
+                optimize_ast_expr(&mut c.value);
+            }
             Stmt::Break(_) | Stmt::Continue(_) | Stmt::Return(None, _) => {}
         }
     }
@@ -261,6 +264,9 @@ pub fn optimize_ast_program(program: &mut Program) {
                 for m in &mut imp.methods {
                     optimize_ast_block(&mut m.body);
                 }
+            }
+            Item::Const(c) => {
+                optimize_ast_expr(&mut c.value);
             }
             _ => {}
         }

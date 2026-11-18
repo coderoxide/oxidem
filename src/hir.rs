@@ -356,6 +356,14 @@ impl HirBuilder {
             Stmt::Expr(expr) => {
                 let _ = self.lower_expr(expr);
             }
+            Stmt::Const(c) => {
+                let op = self.lower_expr(&c.value);
+                self.emit_stmt(HirStatement::Assign {
+                    place: Place::Local(c.name.clone()),
+                    rvalue: Rvalue::Use(op),
+                    span: c.span,
+                });
+            }
             Stmt::While { condition, body, span } => {
                 let header_bb = self.new_block();
                 let body_bb = self.new_block();

@@ -688,3 +688,54 @@ fn test_smart_pointers_and_recursive_structs() {
     let _ = std::fs::remove_file(format!("{}.c", bin_path));
 }
 
+#[test]
+fn test_const_and_filesystem() {
+    // 1. check
+    let check_status = Command::new("cargo")
+        .args(["run", "--quiet", "--", "check", "examples/const_and_fs_demo.ox"])
+        .status()
+        .expect("cargo run check failed");
+    assert!(check_status.success());
+
+    // 2. run (interpreter)
+    let run_output = Command::new("cargo")
+        .args(["run", "--quiet", "--", "run", "examples/const_and_fs_demo.ox"])
+        .output()
+        .expect("cargo run run failed");
+    assert!(run_output.status.success());
+    let run_stdout = String::from_utf8_lossy(&run_output.stdout);
+
+    // 3. build (GCC native)
+    let bin_path = "examples/test_native_const_fs_bin";
+    let build_status = Command::new("cargo")
+        .args(["run", "--quiet", "--", "build", "examples/const_and_fs_demo.ox", "-o", bin_path])
+        .status()
+        .expect("cargo run build failed");
+    assert!(build_status.success());
+
+    // 4. execute native binary
+    let exec_output = Command::new(format!("./{}", bin_path))
+        .output()
+        .expect("failed to execute native binary");
+    assert!(exec_output.status.success());
+    let exec_stdout = String::from_utf8_lossy(&exec_output.stdout);
+
+    // 5. Parity & content assertion
+    assert_eq!(run_stdout.trim(), exec_stdout.trim());
+    assert!(run_stdout.contains("BUFFER_SIZE (1024 * 4): 4096"));
+    assert!(run_stdout.contains("GREETING: OxideFS Sistem Araci"));
+    assert!(run_stdout.contains("BUFFER_SIZE / CARPAN (4096 / 12): 341"));
+    assert!(run_stdout.contains("Dosya yazma: Basarili"));
+    assert!(run_stdout.contains("Dosya mevcut mu?: true"));
+    assert!(run_stdout.contains("Okunan icerik: Merhaba! Oxide guvenli sistem programlama dili dosya sistemi testi."));
+    assert!(run_stdout.contains("Dosya silme: Basarili"));
+    assert!(run_stdout.contains("Silme sonrasi mevcut mu?: false"));
+    assert!(run_stdout.contains("Argumanlar basariyla alindi: true"));
+    assert!(run_stdout.contains("PATH cevre degiskeni: Mevcut (is_some: true)"));
+
+    // Cleanup
+    let _ = std::fs::remove_file(bin_path);
+    let _ = std::fs::remove_file(format!("{}.c", bin_path));
+}
+
+

@@ -10,8 +10,32 @@ struct VarSymbol {
     span: Span,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConstValue {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Str(String),
+    Char(char),
+    U8(u8),
+}
+
+impl ConstValue {
+    pub fn get_type(&self) -> Type {
+        match self {
+            ConstValue::Int(_) => Type::Int,
+            ConstValue::Float(_) => Type::Float,
+            ConstValue::Bool(_) => Type::Bool,
+            ConstValue::Str(_) => Type::Str,
+            ConstValue::Char(_) => Type::Char,
+            ConstValue::U8(_) => Type::U8,
+        }
+    }
+}
+
 pub struct TypeChecker {
     scopes: Vec<HashMap<String, VarSymbol>>,
+    constants: HashMap<String, (Type, ConstValue)>,
     functions: HashMap<String, Function>,
     extern_functions: HashSet<String>,
     structs: HashMap<String, StructDef>,
@@ -28,6 +52,7 @@ impl TypeChecker {
     pub fn new() -> Self {
         Self {
             scopes: vec![HashMap::new()],
+            constants: HashMap::new(),
             functions: HashMap::new(),
             extern_functions: HashSet::new(),
             structs: HashMap::new(),
@@ -97,6 +122,20 @@ impl TypeChecker {
                         return Err(format!("Tip Hatası [{}:{}]: '{}' trait'i zaten tanımlanmış", t.span.line, t.span.col, t.name));
                     }
                     self.traits.insert(t.name.clone(), t.clone());
+                }
+                Item::Const(c) => {
+                    if self.constants.contains_key(&c.name) {
+                        return Err(format!("Tip Hatası [{}:{}]: '{}' sabiti zaten tanımlanmış", c.span.line, c.span.col, c.name));
+                    }
+                    let const_val = self.eval_const_expr(&c.value)?;
+                    if !self.are_types_compatible(&c.ty, &const_val.get_type()) {
+                        return Err(format!(
+                            "Tip Hatası [{}:{}]: '{}' sabiti '{}' beklerken '{}' hesaplandı",
+                            c.span.line, c.span.col, c.name, c.ty, const_val.get_type()
+                        ));
+                    }
+                    self.constants.insert(c.name.clone(), (c.ty.clone(), const_val));
+                    self.declare_var(c.name.clone(), c.ty.clone(), false, c.span)?;
                 }
                 Item::Impl(imp) => {
                     if let Some(ref tr) = imp.trait_name {
@@ -468,10 +507,83 @@ impl TypeChecker {
                 }
                 Ok(())
             }
+            Stmt::Const(c) => {
+                let const_val = self.eval_const_expr(&c.value)?;
+                if !self.are_types_compatible(&c.ty, &const_val.get_type()) {
+                    return Err(format!(
+                        "Tip Hatası [{}:{}]: '{}' sabiti '{}' beklerken '{}' hesaplandı",
+                        c.span.line, c.span.col, c.name, c.ty, const_val.get_type()
+                    ));
+                }
+                self.constants.insert(c.name.clone(), (c.ty.clone(), const_val));
+                self.declare_var(c.name.clone(), c.ty.clone(), false, c.span)?;
+                Ok(())
+            }
             Stmt::Expr(expr) => {
                 self.check_expr(expr)?;
                 Ok(())
             }
+        }
+    }
+
+    fn eval_const_expr(&self, expr: &Expr) -> Result<ConstValue, String> {
+        match expr {
+            Expr::Int(val, _) => Ok(ConstValue::Int(*val)),
+            Expr::Float(val, _) => Ok(ConstValue::Float(*val)),
+            Expr::Bool(val, _) => Ok(ConstValue::Bool(*val)),
+            Expr::Str(val, _) => Ok(ConstValue::Str(val.clone())),
+            Expr::Char(val, _) => Ok(ConstValue::Char(*val)),
+            Expr::U8(val, _) => Ok(ConstValue::U8(*val)),
+            Expr::Ident(name, span) => {
+                if let Some((_, c_val)) = self.constants.get(name) {
+                    Ok(c_val.clone())
+                } else {
+                    Err(format!("Derleme Hatası [{}:{}]: '{}' bir derleme zamanı sabiti (const) değil", span.line, span.col, name))
+                }
+            }
+            Expr::Binary { op, left, right, span } => {
+                let l = self.eval_const_expr(left)?;
+                let r = self.eval_const_expr(right)?;
+                match (op, l, r) {
+                    (BinOp::Add, ConstValue::Int(a), ConstValue::Int(b)) => Ok(ConstValue::Int(a + b)),
+                    (BinOp::Sub, ConstValue::Int(a), ConstValue::Int(b)) => Ok(ConstValue::Int(a - b)),
+                    (BinOp::Mul, ConstValue::Int(a), ConstValue::Int(b)) => Ok(ConstValue::Int(a * b)),
+                    (BinOp::Div, ConstValue::Int(a), ConstValue::Int(b)) => {
+                        if b == 0 { return Err(format!("Derleme Hatası [{}:{}]: Derleme zamanında sıfıra bölme hatası", span.line, span.col)); }
+                        Ok(ConstValue::Int(a / b))
+                    }
+                    (BinOp::Mod, ConstValue::Int(a), ConstValue::Int(b)) => {
+                        if b == 0 { return Err(format!("Derleme Hatası [{}:{}]: Derleme zamanında sıfıra mod alma hatası", span.line, span.col)); }
+                        Ok(ConstValue::Int(a % b))
+                    }
+                    (BinOp::Add, ConstValue::Float(a), ConstValue::Float(b)) => Ok(ConstValue::Float(a + b)),
+                    (BinOp::Sub, ConstValue::Float(a), ConstValue::Float(b)) => Ok(ConstValue::Float(a - b)),
+                    (BinOp::Mul, ConstValue::Float(a), ConstValue::Float(b)) => Ok(ConstValue::Float(a * b)),
+                    (BinOp::Div, ConstValue::Float(a), ConstValue::Float(b)) => Ok(ConstValue::Float(a / b)),
+                    (BinOp::Add, ConstValue::Str(a), ConstValue::Str(b)) => Ok(ConstValue::Str(format!("{}{}", a, b))),
+                    (BinOp::Add, ConstValue::Str(a), ConstValue::Int(b)) => Ok(ConstValue::Str(format!("{}{}", a, b))),
+                    (BinOp::Add, ConstValue::Int(a), ConstValue::Str(b)) => Ok(ConstValue::Str(format!("{}{}", a, b))),
+                    (BinOp::Eq, ConstValue::Int(a), ConstValue::Int(b)) => Ok(ConstValue::Bool(a == b)),
+                    (BinOp::NotEq, ConstValue::Int(a), ConstValue::Int(b)) => Ok(ConstValue::Bool(a != b)),
+                    (BinOp::Lt, ConstValue::Int(a), ConstValue::Int(b)) => Ok(ConstValue::Bool(a < b)),
+                    (BinOp::LtEq, ConstValue::Int(a), ConstValue::Int(b)) => Ok(ConstValue::Bool(a <= b)),
+                    (BinOp::Gt, ConstValue::Int(a), ConstValue::Int(b)) => Ok(ConstValue::Bool(a > b)),
+                    (BinOp::GtEq, ConstValue::Int(a), ConstValue::Int(b)) => Ok(ConstValue::Bool(a >= b)),
+                    (BinOp::And, ConstValue::Bool(a), ConstValue::Bool(b)) => Ok(ConstValue::Bool(a && b)),
+                    (BinOp::Or, ConstValue::Bool(a), ConstValue::Bool(b)) => Ok(ConstValue::Bool(a || b)),
+                    _ => Err(format!("Derleme Hatası [{}:{}]: Bu ikili işlem sabit ifadelerde desteklenmiyor", span.line, span.col)),
+                }
+            }
+            Expr::Unary { op, expr, span } => {
+                let inner = self.eval_const_expr(expr)?;
+                match (op, inner) {
+                    (UnOp::Neg, ConstValue::Int(a)) => Ok(ConstValue::Int(-a)),
+                    (UnOp::Neg, ConstValue::Float(a)) => Ok(ConstValue::Float(-a)),
+                    (UnOp::Not, ConstValue::Bool(a)) => Ok(ConstValue::Bool(!a)),
+                    _ => Err(format!("Derleme Hatası [{}:{}]: Bu tekil işlem sabit ifadelerde desteklenmiyor", span.line, span.col)),
+                }
+            }
+            other => Err(format!("Derleme Hatası [{}:{}]: İfade derleme zamanı sabiti (const) olarak değerlendirilemez", other.span().line, other.span().col)),
         }
     }
 
@@ -1326,6 +1438,79 @@ impl TypeChecker {
                             return Err(format!("Tip Hatası [{}:{}]: 'read_file' dosya yolunu 'str' olarak bekler, bulunan: '{}'", span.line, span.col, path_ty));
                         }
                         return Ok(Type::Str);
+                    }
+                    "fs::read_to_string" | "read_to_string" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'fs::read_to_string' 1 argüman bekler: (yol: str)", span.line, span.col));
+                        }
+                        let path_ty = self.check_expr(&args[0])?;
+                        if path_ty != Type::Str {
+                            return Err(format!("Tip Hatası [{}:{}]: 'fs::read_to_string' dosya yolunu 'str' olarak bekler, bulunan: '{}'", span.line, span.col, path_ty));
+                        }
+                        return Ok(Type::Result(Box::new(Type::Str), Box::new(Type::Str)));
+                    }
+                    "fs::write" => {
+                        if args.len() != 2 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'fs::write' 2 argüman bekler: (yol: str, icerik: str)", span.line, span.col));
+                        }
+                        let path_ty = self.check_expr(&args[0])?;
+                        let content_ty = self.check_expr(&args[1])?;
+                        if path_ty != Type::Str || content_ty != Type::Str {
+                            return Err(format!("Tip Hatası [{}:{}]: 'fs::write' (yol: str, icerik: str) bekler", span.line, span.col));
+                        }
+                        return Ok(Type::Result(Box::new(Type::Void), Box::new(Type::Str)));
+                    }
+                    "fs::remove_file" | "remove_file" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'fs::remove_file' 1 argüman bekler: (yol: str)", span.line, span.col));
+                        }
+                        let path_ty = self.check_expr(&args[0])?;
+                        if path_ty != Type::Str {
+                            return Err(format!("Tip Hatası [{}:{}]: 'fs::remove_file' dosya yolunu 'str' olarak bekler, bulunan: '{}'", span.line, span.col, path_ty));
+                        }
+                        return Ok(Type::Result(Box::new(Type::Void), Box::new(Type::Str)));
+                    }
+                    "fs::exists" | "file_exists" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'fs::exists' 1 argüman bekler: (yol: str)", span.line, span.col));
+                        }
+                        let path_ty = self.check_expr(&args[0])?;
+                        if path_ty != Type::Str {
+                            return Err(format!("Tip Hatası [{}:{}]: 'fs::exists' dosya yolunu 'str' olarak bekler, bulunan: '{}'", span.line, span.col, path_ty));
+                        }
+                        return Ok(Type::Bool);
+                    }
+                    "fs::create_dir" | "create_dir" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'fs::create_dir' 1 argüman bekler: (yol: str)", span.line, span.col));
+                        }
+                        let path_ty = self.check_expr(&args[0])?;
+                        if path_ty != Type::Str {
+                            return Err(format!("Tip Hatası [{}:{}]: 'fs::create_dir' yolunu 'str' olarak bekler, bulunan: '{}'", span.line, span.col, path_ty));
+                        }
+                        return Ok(Type::Result(Box::new(Type::Void), Box::new(Type::Str)));
+                    }
+                    "env::args" => {
+                        if !args.is_empty() {
+                            return Err(format!("Tip Hatası [{}:{}]: 'env::args' argüman beklemez: env::args()", span.line, span.col));
+                        }
+                        return Ok(Type::Array(Box::new(Type::Str)));
+                    }
+                    "env::var" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'env::var' 1 argüman bekler: env::var(anahtar: str)", span.line, span.col));
+                        }
+                        let key_ty = self.check_expr(&args[0])?;
+                        if key_ty != Type::Str {
+                            return Err(format!("Tip Hatası [{}:{}]: 'env::var' anahtarı 'str' olmalıdır, bulunan: '{}'", span.line, span.col, key_ty));
+                        }
+                        return Ok(Type::Option(Box::new(Type::Str)));
+                    }
+                    "env::current_dir" | "current_dir" => {
+                        if !args.is_empty() {
+                            return Err(format!("Tip Hatası [{}:{}]: 'env::current_dir' argüman beklemez: env::current_dir()", span.line, span.col));
+                        }
+                        return Ok(Type::Result(Box::new(Type::Str), Box::new(Type::Str)));
                     }
                     "write_file" => {
                         if args.len() != 2 {
