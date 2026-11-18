@@ -28,6 +28,7 @@ pub enum Type {
     Mutex(Box<Type>),
     TcpListener,
     TcpStream,
+    Instant,
     Tuple(Vec<Type>),
     Ref {
         inner: Box<Type>,
@@ -72,6 +73,7 @@ impl std::fmt::Display for Type {
             Type::Mutex(inner) => write!(f, "Mutex<{}>", inner),
             Type::TcpListener => write!(f, "TcpListener"),
             Type::TcpStream => write!(f, "TcpStream"),
+            Type::Instant => write!(f, "Instant"),
             Type::Tuple(types) => {
                 let inner = types.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", ");
                 write!(f, "({})", inner)

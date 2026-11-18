@@ -879,3 +879,51 @@ fn test_http_and_json_support() {
     let _ = std::fs::remove_file(bin_path);
     let _ = std::fs::remove_file(format!("{}.c", bin_path));
 }
+
+#[test]
+fn test_crypto_base64_and_time() {
+    // 1. check
+    let check_status = Command::new("cargo")
+        .args(["run", "--quiet", "--", "check", "examples/crypto_and_time_demo.ox"])
+        .status()
+        .expect("cargo run check failed");
+    assert!(check_status.success());
+
+    // 2. run (interpreter)
+    let run_output = Command::new("cargo")
+        .args(["run", "--quiet", "--", "run", "examples/crypto_and_time_demo.ox"])
+        .output()
+        .expect("cargo run run failed");
+    assert!(run_output.status.success());
+    let run_stdout = String::from_utf8_lossy(&run_output.stdout);
+
+    // 3. build (GCC native)
+    let bin_path = "examples/test_native_crypto_time_bin";
+    let build_status = Command::new("cargo")
+        .args(["run", "--quiet", "--", "build", "examples/crypto_and_time_demo.ox", "-o", bin_path])
+        .status()
+        .expect("cargo run build failed");
+    assert!(build_status.success());
+
+    // 4. execute native binary
+    let exec_output = Command::new(format!("./{}", bin_path))
+        .output()
+        .expect("failed to execute native binary");
+    assert!(exec_output.status.success());
+    let exec_stdout = String::from_utf8_lossy(&exec_output.stdout);
+
+    // 5. Parity & content assertion
+    assert!(run_stdout.contains("Metin Özeti (FNV-1a 64-bit): 95dc38c09bd5125c"));
+    assert!(run_stdout.contains("CRC32 Kontrol Toplamı: 3421780262"));
+    assert!(run_stdout.contains("Base64 Çözülmüş: Oxide Dili Sistem Programlama 2026!"));
+    assert!(run_stdout.contains("=== Tum Kripto, Base64 ve Zamanlama Testleri Basariyla Tamamlandi! ==="));
+
+    assert!(exec_stdout.contains("Metin Özeti (FNV-1a 64-bit): 95dc38c09bd5125c"));
+    assert!(exec_stdout.contains("CRC32 Kontrol Toplamı: 3421780262"));
+    assert!(exec_stdout.contains("Base64 Çözülmüş: Oxide Dili Sistem Programlama 2026!"));
+    assert!(exec_stdout.contains("=== Tum Kripto, Base64 ve Zamanlama Testleri Basariyla Tamamlandi! ==="));
+
+    // Cleanup
+    let _ = std::fs::remove_file(bin_path);
+    let _ = std::fs::remove_file(format!("{}.c", bin_path));
+}

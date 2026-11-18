@@ -51,6 +51,7 @@ pub enum Value {
     Mutex(Arc<Mutex<Value>>),
     TcpListener(Arc<Mutex<std::net::TcpListener>>),
     TcpStream(Arc<Mutex<std::net::TcpStream>>),
+    Instant(std::time::Instant),
     Some(Box<Value>),
     None,
     Ok(Box<Value>),
@@ -83,6 +84,7 @@ impl PartialEq for Value {
             (Value::Mutex(a), Value::Mutex(b)) => Arc::ptr_eq(a, b),
             (Value::TcpListener(a), Value::TcpListener(b)) => Arc::ptr_eq(a, b),
             (Value::TcpStream(a), Value::TcpStream(b)) => Arc::ptr_eq(a, b),
+            (Value::Instant(a), Value::Instant(b)) => a == b,
             _ => false,
         }
     }
@@ -151,6 +153,7 @@ impl std::fmt::Display for Value {
             }
             Value::TcpListener(_) => write!(f, "TcpListener"),
             Value::TcpStream(_) => write!(f, "TcpStream"),
+            Value::Instant(_) => write!(f, "Instant {{ ... }}"),
             Value::Some(v) => write!(f, "Some({})", v),
             Value::None => write!(f, "None"),
             Value::Ok(v) => write!(f, "Ok({})", v),
@@ -607,6 +610,48 @@ impl Interpreter {
                     Some(v) => return Ok(Value::Some(Box::new(Value::Str(v)))),
                     None => return Ok(Value::None),
                 }
+            }
+            "crypto::hash" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'crypto::hash' 1 argüman bekler", span.line, span.col));
+                }
+                let data = args[0].to_string();
+                return Ok(Value::Str(fnv1a_hash(&data)));
+            }
+            "crypto::crc32" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'crypto::crc32' 1 argüman bekler", span.line, span.col));
+                }
+                let data = args[0].to_string();
+                return Ok(Value::Int(compute_crc32(&data)));
+            }
+            "base64::encode" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'base64::encode' 1 argüman bekler", span.line, span.col));
+                }
+                let data = args[0].to_string();
+                return Ok(Value::Str(base64_encode(&data)));
+            }
+            "base64::decode" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'base64::decode' 1 argüman bekler", span.line, span.col));
+                }
+                let encoded = args[0].to_string();
+                match base64_decode(&encoded) {
+                    Ok(decoded) => return Ok(Value::Ok(Box::new(Value::Str(decoded)))),
+                    Err(e) => return Ok(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
+            "time::now_millis" => {
+                let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+                return Ok(Value::Int(ms));
+            }
+            "time::now_secs" => {
+                let s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+                return Ok(Value::Int(s));
+            }
+            "time::Instant::now" | "Instant::now" => {
+                return Ok(Value::Instant(std::time::Instant::now()));
             }
             "format" => {
                 if args.is_empty() {
@@ -2292,6 +2337,14 @@ impl Interpreter {
                         let _ = stream.shutdown(std::net::Shutdown::Both);
                         Ok(Value::Void)
                     }
+                    Value::Instant(inst) if method == "elapsed_millis" => {
+                        if !args.is_empty() { return Err(format!("Hata [{}:{}]: 'elapsed_millis()' argüman beklemez", span.line, span.col)); }
+                        Ok(Value::Int(inst.elapsed().as_millis() as i64))
+                    }
+                    Value::Instant(inst) if method == "elapsed_micros" => {
+                        if !args.is_empty() { return Err(format!("Hata [{}:{}]: 'elapsed_micros()' argüman beklemez", span.line, span.col)); }
+                        Ok(Value::Int(inst.elapsed().as_micros() as i64))
+                    }
                     Value::Rc(inner, count) if method == "clone" => {
                         *count.lock().unwrap() += 1;
                         Ok(Value::Rc(Arc::clone(inner), Arc::clone(count)))
@@ -2721,4 +2774,97 @@ fn json_parse_to_map(json: &str) -> Result<HashMap<String, Value>, String> {
     }
 
     Ok(map)
+}
+
+fn fnv1a_hash(data: &str) -> String {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in data.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{:016x}", hash)
+}
+
+fn compute_crc32(data: &str) -> i64 {
+    let mut crc: u32 = 0xFFFFFFFF;
+    for &byte in data.as_bytes() {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg() & 0xEDB88320;
+            crc = (crc >> 1) ^ mask;
+        }
+    }
+    (!crc) as i64
+}
+
+fn base64_encode(data: &str) -> String {
+    let charset = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = data.as_bytes();
+    let mut result = String::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b0 = bytes[i];
+        let b1 = if i + 1 < bytes.len() { bytes[i + 1] } else { 0 };
+        let b2 = if i + 2 < bytes.len() { bytes[i + 2] } else { 0 };
+
+        let triple = ((b0 as u32) << 16) | ((b1 as u32) << 8) | (b2 as u32);
+        result.push(charset[((triple >> 18) & 0x3F) as usize] as char);
+        result.push(charset[((triple >> 12) & 0x3F) as usize] as char);
+        if i + 1 < bytes.len() {
+            result.push(charset[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if i + 2 < bytes.len() {
+            result.push(charset[(triple & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        i += 3;
+    }
+    result
+}
+
+fn base64_decode(data: &str) -> Result<String, String> {
+    let trimmed = data.trim();
+    if trimmed.is_empty() { return Ok(String::new()); }
+    let charset = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut table = [255u8; 256];
+    for (idx, &c) in charset.iter().enumerate() {
+        table[c as usize] = idx as u8;
+    }
+    let chars: Vec<char> = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+    if chars.len() % 4 != 0 {
+        return Err("Gecersiz base64 uzunlugu".to_string());
+    }
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c0 = chars[i];
+        let c1 = chars[i + 1];
+        let c2 = chars[i + 2];
+        let c3 = chars[i + 3];
+
+        let v0 = table[c0 as usize];
+        let v1 = table[c1 as usize];
+        if v0 == 255 || v1 == 255 { return Err("Gecersiz base64 karakteri".to_string()); }
+
+        let (v2, pad2) = if c2 == '=' { (0, true) } else {
+            let v = table[c2 as usize];
+            if v == 255 { return Err("Gecersiz base64 karakteri".to_string()); }
+            (v, false)
+        };
+        let (v3, pad3) = if c3 == '=' { (0, true) } else {
+            let v = table[c3 as usize];
+            if v == 255 { return Err("Gecersiz base64 karakteri".to_string()); }
+            (v, false)
+        };
+
+        let triple = ((v0 as u32) << 18) | ((v1 as u32) << 12) | ((v2 as u32) << 6) | (v3 as u32);
+        out.push(((triple >> 16) & 0xFF) as u8);
+        if !pad2 { out.push(((triple >> 8) & 0xFF) as u8); }
+        if !pad3 { out.push((triple & 0xFF) as u8); }
+        i += 4;
+    }
+    String::from_utf8(out).map_err(|e| format!("Gecersiz metin: {}", e))
 }

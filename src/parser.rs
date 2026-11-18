@@ -596,6 +596,8 @@ impl Parser {
                     Ok(Type::TcpListener)
                 } else if name == "TcpStream" {
                     Ok(Type::TcpStream)
+                } else if name == "Instant" {
+                    Ok(Type::Instant)
                 } else {
                     Ok(Type::Named(name.clone()))
                 }

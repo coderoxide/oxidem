@@ -7,7 +7,7 @@ Bu dosya, Rust tabanlı Oxide (`.ox`) programlama dili ve derleyici/yorumlayıc�
 ## 📊 Genel Durum
 - **Proje Adı:** Oxide (`.ox`)
 - **Geliştirme Dili:** Rust (2024 edition)
-- **Mevcut Sürüm:** v0.19.0 (HTTP Sunucusu, REST API & JSON Desteği http::get/post/response/request_*, json::stringify/parse/get, Ağ ve Soket Programlama TcpListener/TcpStream, Eşzamanlılık ve Çoklu İş Parçacığı thread::spawn/sleep, Mesajlaşma Kanalları channel/send/recv, Karşılıklı Dışlama Mutex<T>, Derleme Zamanı Sabitleri const, Standart Dosya Sistemi fs::, Sistem ve Çevre Değişkenleri env::, Akıllı İşaretçiler Box/Rc/RefCell, Target Build Dizin Mimarisi, oxide.lock Kilit Dosyası, oxide clean, Operator Overloading & Traits, Slices & Range Indexing, String Interpolation f"...", Tuples & Destructuring, Trait & Interface System, Option/Result & Try '?' Operator, Generics & Monomorphization, Closures, Arena Management, HIR Optimizer, Test Engine & oxide.toml)
+- **Mevcut Sürüm:** v0.20.0 (Kriptografi crypto::hash/crc32, Base64 encode/decode, Yüksek Hassasiyetli Zamanlama time::now_millis/now_secs & Instant::now, HTTP Sunucusu, REST API & JSON Desteği http::get/post/response/request_*, json::stringify/parse/get, Ağ ve Soket Programlama TcpListener/TcpStream, Eşzamanlılık ve Çoklu İş Parçacığı thread::spawn/sleep, Mesajlaşma Kanalları channel/send/recv, Karşılıklı Dışlama Mutex<T>, Derleme Zamanı Sabitleri const, Standart Dosya Sistemi fs::, Sistem ve Çevre Değişkenleri env::, Akıllı İşaretçiler Box/Rc/RefCell, Target Build Dizin Mimarisi, oxide.lock Kilit Dosyası, oxide clean, Operator Overloading & Traits, Slices & Range Indexing, String Interpolation f"...", Tuples & Destructuring, Trait & Interface System, Option/Result & Try '?' Operator, Generics & Monomorphization, Closures, Arena Management, HIR Optimizer, Test Engine & oxide.toml)
 - **Bağımlılık Durumu:** Sıfır dış bağımlılık (Pure Rust Standard Library)
 - **Çalışma Modları:** Yorumlayıcı (`run`), Tip Denetleyici (`check`), Native GCC Derleyici (`build`), Token Dökücü (`tokens`), AST Dökücü (`ast`), HIR Dökücü (`hir`), REPL (`repl`)
 
@@ -370,10 +370,40 @@ Bu dosya, Rust tabanlı Oxide (`.ox`) programlama dili ve derleyici/yorumlayıc�
 
 ---
 
-### Aşama 24: Kriptografi & Güvenlik ve Zamanlama Modülleri (Sıradaki Hedef)
-- [ ] **Kriptografik Özet Fonksiyonları (`crypto::sha256`, `crypto::md5`):** Güvenli veri doğrulama ve parola özetleme.
-- [ ] **Base64 Kodlama & Çözme (`base64::encode`, `base64::decode`):** Ağ ve veri aktarımında ikili veri kodlama.
-- [ ] **Tarih & Zamanlama API'si (`time::now()`, `time::Instant`, `time::duration`):** Yüksek hassasiyetli süre ölçümü ve zaman damgası.
+### Aşama 24: Kriptografi & Güvenlik ve Zamanlama Modülleri (Tamamlandı)
+- [x] **Kriptografik Özet ve Kontrol Fonksiyonları (`crypto::`):**
+  - `crypto::hash(s: str) -> int`: 64-bit FNV-1a özetleme fonksiyonu.
+  - `crypto::crc32(s: str) -> int`: IEEE 802.3 CRC-32 sağlama toplamı.
+- [x] **Base64 Kodlama & Çözme (`base64::`):**
+  - `base64::encode(s: str) -> str`: Standart RFC 4648 Base64 kodlayıcı.
+  - `base64::decode(s: str) -> Result<str, str>`: Hata korumalı Base64 çözücü.
+- [x] **Tarih & Yüksek Hassasiyetli Kronometre (`time::*` & `Instant`):**
+  - `time::now_secs() -> int`: Unix epoch'tan bu yana geçen saniye.
+  - `time::now_millis() -> int`: Unix epoch'tan bu yana geçen milisaniye.
+  - `time::Instant::now()` / `Instant::now()`: Monotonik sistem kronometresi.
+  - `inst.elapsed_millis() -> int` ve `inst.elapsed_micros() -> int`: Yüksek çözünürlüklü süre ölçümü.
+- [x] **Native C Transpiler & GCC Entegrasyonu:**
+  - POSIX `<sys/time.h>` (`clock_gettime(CLOCK_MONOTONIC)`, `gettimeofday`).
+  - Bitwise CRC-32 ve 64-bit FNV-1a C runtime uygulaması.
+  - GCC `-O2` derlemesinde yorumlayıcı ile %100 çıktı paritesi.
+- [x] **Otomatik Entegrasyon Testi:** `test_crypto_base64_and_time` ile 35/35 test başarıyla geçti.
+
+---
+
+### Aşama 25: Geliştirici Araçları (`oxide doc` & `oxide fmt`) (Sıradaki Hedef)
+- [ ] **Belge Üretici (`oxide doc`):**
+  - `///` dokümantasyon yorumlarının sözdizim ayrıştırıcı (parser) tarafından toplanması.
+  - Modüller, fonksiyonlar, struct'lar, trait'ler ve enum'lar için otomatik Markdown ve HTML API dokümantasyonu üretimi (`oxide doc <dosya.ox> -o docs/`).
+- [ ] **Kod Biçimlendirici (`oxide fmt`):**
+  - Standart Oxide stil kurallarına göre kod girintileme (4 boşluk), satır sonları, parantez yerleşimi ve operatör boşluklarını otomatik düzenleme (`oxide fmt <dosya.ox>` veya `oxide fmt --check`).
+
+---
+
+### Aşama 26: v1.0.0 Grand Finale & Dağıtım Sürümü
+- [ ] **Tam Bağımsız Yayın Paketi (Release Packaging):**
+  - Sürümün `v1.0.0` olarak mühürlenmesi.
+  - Kapsamlı dökümantasyon ve örnekler galerisinin son kontrolü.
+  - Production-ready stabilite ve performans onayı.
 
 
 

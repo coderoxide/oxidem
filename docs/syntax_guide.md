@@ -1374,6 +1374,81 @@ sunucu.join().unwrap();
 * Native C Binary (`oxide build`): POSIX Berkeley Sockets ve arena tahsisçisi (`_ox_arena_alloc`) üzerinden çalışır; bellek sızıntısı olmadan maksimum GCC `-O2` verimiyle çalışır.
 * Yorumlayıcı (`oxide run`) ve GCC native binary (`oxide build`) arasında %100 çıktı ve davranış uyumu (parity) sağlanır.
 
+---
+
+## 27. Kriptografi, Base64 Kodlama ve Hassas Zamanlama (Time, Base64 & Crypto)
+
+Oxide v0.20.0 (Aşama 24) ile birlikte güvenli veri doğrulama, hash alma, ikili veri kodlama/çözme ve yüksek hassasiyetli kronometre/zamanlama yetenekleri doğrudan standart kütüphaneye dahil edilmiştir.
+
+### 27.1. Kriptografik Özetleme & Kontrol Değerleri (`crypto::*`)
+Oxide, 64-bit FNV-1a hash algoritması ve donanım/ağ standartı IEEE 802.3 CRC-32 checksum hesaplamasını dahili olarak sunar:
+
+* `crypto::hash(s: str) -> int`: 64-bit FNV-1a özetleme fonksiyonu. Dizgiler için yüksek dağılımlı ve son derece hızlı bir hash değeri üretir.
+* `crypto::crc32(s: str) -> int`: 32-bit CRC (Cyclic Redundancy Check) sağlama toplamı. Veri bütünlüğü kontrollerinde kullanılır.
+
+```rust
+let metin = "Oxide Systems Programming";
+
+let h = crypto::hash(metin);
+println("64-bit FNV-1a Hash:", h);
+
+let crc = crypto::crc32(metin);
+println("CRC-32 Checksum:", crc);
+```
+
+### 27.2. Base64 Kodlama & Çözme (`base64::*`)
+İkili verileri ve metinleri ağ üzerinden veya metin tabanlı protokollerde (JSON, HTTP header, vb.) güvenle taşımak için standart Base64 işlevleri:
+
+* `base64::encode(s: str) -> str`: Verilen metni standart RFC 4648 Base64 dizgisine dönüştürür.
+* `base64::decode(s: str) -> Result<str, str>`: Base64 kodlanmış bir dizgiyi orijinal metne çözer. Geçersiz padding veya karakter durumunda `Err` döner.
+
+```rust
+let gizli_mesaj = "Sistem Çekirdeği Aktif!";
+let kodlanmis = base64::encode(gizli_mesaj);
+println("Base64 Kodlu:", kodlanmis);
+
+let cozulmus = base64::decode(kodlanmis).unwrap();
+println("Orijinal Metin:", cozulmus);
+assert_eq(cozulmus, gizli_mesaj);
+```
+
+### 27.3. Unix Zamanı ve Hassas Kronometre (`time::*` & `Instant`)
+Gerçek zamanlı sistem programlaması ve performans profillemesi (benchmarking) için iki temel zaman yaklaşımı sunulur:
+
+1. **Epoch Zamanı:**
+   * `time::now_secs() -> int`: Unix epoch'tan (1 Ocak 1970 UTC) bu yana geçen saniye sayısı.
+   * `time::now_millis() -> int`: Unix epoch'tan bu yana geçen milisaniye sayısı.
+
+2. **Monotonik Kronometre (`Instant`):**
+   Sistem saati değişikliklerinden (NTP güncellemeleri, saat dilimi vb.) etkilenmeyen, ileriye doğru monotonik olarak artan yüksek hassasiyetli kronometre nesnesi.
+   * `time::Instant::now()` veya `Instant::now()`: Geçerli anı temsil eden yeni bir `Instant` nesnesi üretir.
+   * `inst.elapsed_millis() -> int`: Kronometrenin başlatıldığı andan bu yana geçen milisaniye süresi.
+   * `inst.elapsed_micros() -> int`: Kronometrenin başlatıldığı andan bu yana geçen mikrosaniye süresi.
+
+```rust
+let baslangic_epoch = time::now_millis();
+println("Geçerli Unix Zamanı (ms):", baslangic_epoch);
+
+let kronometre = Instant::now();
+
+// Yoğun bir hesaplama veya bekleme
+let mut sayac = 0;
+while sayac < 1000000 {
+    sayac = sayac + 1;
+}
+
+let gecen_ms = kronometre.elapsed_millis();
+let gecen_us = kronometre.elapsed_micros();
+println("Geçen süre (ms):", gecen_ms);
+println("Geçen süre (us):", gecen_us);
+```
+
+### 27.4. %100 Parite & GCC Uyumluluğu
+* Yorumlayıcı modunda (`oxide run`), Rust `std::time::Instant` ve `std::time::SystemTime` altyapısı kullanılır.
+* Native C derleme modunda (`oxide build`), POSIX `<sys/time.h>` (`gettimeofday` ve `clock_gettime(CLOCK_MONOTONIC, ...)`) sistem çağrıları kullanılarak GCC `-O2` seviyesinde sıfır gecikmeli doğal makine koduna dönüştürülür.
+* Yorumlayıcı ve native binary arasında tam sözleşme ve çıktı uyumluluğu garanti edilir.
+
+
 
 
 

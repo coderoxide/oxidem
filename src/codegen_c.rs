@@ -176,6 +176,10 @@ impl CodegenC {
                     "http::get" | "http::post" => Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
                     "json::parse" => Type::Result(Box::new(Type::Named("Map".to_string())), Box::new(Type::Str)),
                     "json::get" => Type::Option(Box::new(Type::Str)),
+                    "crypto::hash" | "base64::encode" => Type::Str,
+                    "crypto::crc32" | "time::now_millis" | "time::now_secs" => Type::Int,
+                    "base64::decode" => Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+                    "time::Instant::now" | "Instant::now" => Type::Instant,
                     _ => self.fn_ret_types.get(callee).cloned().unwrap_or(Type::Void),
                 }
             }
@@ -212,6 +216,7 @@ impl CodegenC {
                     Type::TcpStream if method == "write" => return Type::Result(Box::new(Type::Int), Box::new(Type::Str)),
                     Type::TcpStream if method == "read" => return Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
                     Type::TcpStream if method == "close" => return Type::Void,
+                    Type::Instant if method == "elapsed_millis" || method == "elapsed_micros" => return Type::Int,
                     _ => {}
                 }
                 let mut curr_target = target_ty;
@@ -559,6 +564,7 @@ impl CodegenC {
             Type::Mutex(_) => "_OxMutex*".to_string(),
             Type::TcpListener => "_OxTcpListener*".to_string(),
             Type::TcpStream => "_OxTcpStream*".to_string(),
+            Type::Instant => "_OxInstant*".to_string(),
             Type::Generic { name, type_args } => {
                 let args_str = type_args.iter().map(|a| match a {
                     Type::Int => "int".to_string(),
@@ -630,6 +636,7 @@ impl CodegenC {
         self.write_line("#include <sys/stat.h>");
         self.write_line("#include <pthread.h>");
         self.write_line("#include <time.h>");
+        self.write_line("#include <sys/time.h>");
         self.write_line("#include <sys/socket.h>");
         self.write_line("#include <netinet/in.h>");
         self.write_line("#include <arpa/inet.h>");
@@ -1929,6 +1936,128 @@ impl CodegenC {
         self.write_line("    return _ox_ok((int64_t)(uintptr_t)m);");
         self.write_line("}");
         self.write_line("");
+        self.write_line("/* Time, Crypto & Base64 Functions */");
+        self.write_line("typedef struct {");
+        self.write_line("    int64_t sec;");
+        self.write_line("    int64_t nsec;");
+        self.write_line("} _OxInstant;");
+        self.write_line("");
+        self.write_line("static inline _OxInstant* _ox_instant_now(void) {");
+        self.write_line("    struct timespec ts;");
+        self.write_line("    clock_gettime(CLOCK_MONOTONIC, &ts);");
+        self.write_line("    _OxInstant* inst = (_OxInstant*)_ox_arena_alloc(sizeof(_OxInstant));");
+        self.write_line("    inst->sec = ts.tv_sec;");
+        self.write_line("    inst->nsec = ts.tv_nsec;");
+        self.write_line("    return inst;");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline int64_t _ox_instant_elapsed_millis(_OxInstant* inst) {");
+        self.write_line("    if (!inst) return 0LL;");
+        self.write_line("    struct timespec ts;");
+        self.write_line("    clock_gettime(CLOCK_MONOTONIC, &ts);");
+        self.write_line("    return (ts.tv_sec - inst->sec) * 1000LL + (ts.tv_nsec - inst->nsec) / 1000000LL;");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline int64_t _ox_instant_elapsed_micros(_OxInstant* inst) {");
+        self.write_line("    if (!inst) return 0LL;");
+        self.write_line("    struct timespec ts;");
+        self.write_line("    clock_gettime(CLOCK_MONOTONIC, &ts);");
+        self.write_line("    return (ts.tv_sec - inst->sec) * 1000000LL + (ts.tv_nsec - inst->nsec) / 1000LL;");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline int64_t _ox_time_now_millis(void) {");
+        self.write_line("    struct timeval tv;");
+        self.write_line("    gettimeofday(&tv, NULL);");
+        self.write_line("    return (int64_t)tv.tv_sec * 1000LL + tv.tv_usec / 1000LL;");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline int64_t _ox_time_now_secs(void) {");
+        self.write_line("    return (int64_t)time(NULL);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline const char* _ox_crypto_hash(const char* data) {");
+        self.write_line("    if (!data) return \"0000000000000000\";");
+        self.write_line("    uint64_t h = 0xcbf29ce484222325ULL;");
+        self.write_line("    const unsigned char* p = (const unsigned char*)data;");
+        self.write_line("    while (*p) {");
+        self.write_line("        h ^= (uint64_t)*p++;");
+        self.write_line("        h *= 0x100000001b3ULL;");
+        self.write_line("    }");
+        self.write_line("    char* buf = (char*)_ox_arena_alloc(32);");
+        self.write_line("    snprintf(buf, 32, \"%016llx\", (unsigned long long)h);");
+        self.write_line("    return buf;");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline int64_t _ox_crypto_crc32(const char* data) {");
+        self.write_line("    if (!data) return 0LL;");
+        self.write_line("    uint32_t crc = 0xFFFFFFFF;");
+        self.write_line("    const unsigned char* p = (const unsigned char*)data;");
+        self.write_line("    while (*p) {");
+        self.write_line("        crc ^= *p++;");
+        self.write_line("        for (int i = 0; i < 8; i++) {");
+        self.write_line("            uint32_t mask = -(crc & 1) & 0xEDB88320;");
+        self.write_line("            crc = (crc >> 1) ^ mask;");
+        self.write_line("        }");
+        self.write_line("    }");
+        self.write_line("    return (int64_t)(~crc);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline const char* _ox_base64_encode(const char* data) {");
+        self.write_line("    if (!data) return \"\";");
+        self.write_line("    const char* cs = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\";");
+        self.write_line("    size_t len = strlen(data);");
+        self.write_line("    size_t out_len = 4 * ((len + 2) / 3);");
+        self.write_line("    char* out = (char*)_ox_arena_alloc(out_len + 1);");
+        self.write_line("    size_t j = 0;");
+        self.write_line("    for (size_t i = 0; i < len; i += 3) {");
+        self.write_line("        uint32_t b0 = (unsigned char)data[i];");
+        self.write_line("        uint32_t b1 = (i + 1 < len) ? (unsigned char)data[i + 1] : 0;");
+        self.write_line("        uint32_t b2 = (i + 2 < len) ? (unsigned char)data[i + 2] : 0;");
+        self.write_line("        uint32_t triple = (b0 << 16) | (b1 << 8) | b2;");
+        self.write_line("        out[j++] = cs[(triple >> 18) & 0x3F];");
+        self.write_line("        out[j++] = cs[(triple >> 12) & 0x3F];");
+        self.write_line("        out[j++] = (i + 1 < len) ? cs[(triple >> 6) & 0x3F] : '=';");
+        self.write_line("        out[j++] = (i + 2 < len) ? cs[triple & 0x3F] : '=';");
+        self.write_line("    }");
+        self.write_line("    out[j] = '\\0';");
+        self.write_line("    return out;");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxResult _ox_base64_decode(const char* data) {");
+        self.write_line("    if (!data) return _ox_ok((int64_t)(uintptr_t)\"\");");
+        self.write_line("    while (*data && (*data == ' ' || *data == '\\t' || *data == '\\r' || *data == '\\n')) data++;");
+        self.write_line("    if (!*data) return _ox_ok((int64_t)(uintptr_t)\"\");");
+        self.write_line("    size_t in_len = strlen(data);");
+        self.write_line("    while (in_len > 0 && (data[in_len - 1] == ' ' || data[in_len - 1] == '\\t' || data[in_len - 1] == '\\r' || data[in_len - 1] == '\\n')) in_len--;");
+        self.write_line("    if (in_len % 4 != 0) return _ox_err((int64_t)(uintptr_t)\"Gecersiz base64 uzunlugu\");");
+        self.write_line("    static uint8_t table[256];");
+        self.write_line("    static bool init = false;");
+        self.write_line("    if (!init) {");
+        self.write_line("        memset(table, 255, sizeof(table));");
+        self.write_line("        const char* cs = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\";");
+        self.write_line("        for (int i = 0; i < 64; i++) table[(unsigned char)cs[i]] = i;");
+        self.write_line("        init = true;");
+        self.write_line("    }");
+        self.write_line("    char* out = (char*)_ox_arena_alloc(in_len + 1);");
+        self.write_line("    size_t j = 0;");
+        self.write_line("    for (size_t i = 0; i < in_len; i += 4) {");
+        self.write_line("        uint8_t v0 = table[(unsigned char)data[i]];");
+        self.write_line("        uint8_t v1 = table[(unsigned char)data[i + 1]];");
+        self.write_line("        if (v0 == 255 || v1 == 255) return _ox_err((int64_t)(uintptr_t)\"Gecersiz base64 karakteri\");");
+        self.write_line("        bool pad2 = (data[i + 2] == '=');");
+        self.write_line("        bool pad3 = (data[i + 3] == '=');");
+        self.write_line("        uint8_t v2 = pad2 ? 0 : table[(unsigned char)data[i + 2]];");
+        self.write_line("        uint8_t v3 = pad3 ? 0 : table[(unsigned char)data[i + 3]];");
+        self.write_line("        if ((!pad2 && v2 == 255) || (!pad3 && v3 == 255)) return _ox_err((int64_t)(uintptr_t)\"Gecersiz base64 karakteri\");");
+        self.write_line("        uint32_t triple = ((uint32_t)v0 << 18) | ((uint32_t)v1 << 12) | ((uint32_t)v2 << 6) | (uint32_t)v3;");
+        self.write_line("        out[j++] = (char)((triple >> 16) & 0xFF);");
+        self.write_line("        if (!pad2) out[j++] = (char)((triple >> 8) & 0xFF);");
+        self.write_line("        if (!pad3) out[j++] = (char)(triple & 0xFF);");
+        self.write_line("    }");
+        self.write_line("    out[j] = '\\0';");
+        self.write_line("    return _ox_ok((int64_t)(uintptr_t)out);");
+        self.write_line("}");
+        self.write_line("");
 
         // Enums definition
         for item in &program.items {
@@ -2657,6 +2786,8 @@ impl CodegenC {
                     "write" if matches!(target_ty, Type::TcpStream) => format!("_ox_tcp_stream_write({}, _ox_to_str({}))", t, self.compile_expr(&args[0])),
                     "read" if matches!(target_ty, Type::TcpStream) => format!("_ox_tcp_stream_read({})", t),
                     "close" if matches!(target_ty, Type::TcpStream) => format!("_ox_tcp_stream_close({})", t),
+                    "elapsed_millis" if matches!(target_ty, Type::Instant) => format!("_ox_instant_elapsed_millis({})", t),
+                    "elapsed_micros" if matches!(target_ty, Type::Instant) => format!("_ox_instant_elapsed_micros({})", t),
                     "unwrap" => {
                         let inner_ty = match target_ty {
                             Type::Option(ref in_t) => Some((**in_t).clone()),
@@ -2664,7 +2795,7 @@ impl CodegenC {
                             _ => None,
                         };
                         if let Some(in_t) = inner_ty {
-                            if matches!(in_t, Type::Box(_) | Type::Rc(_) | Type::RefCell(_) | Type::Str | Type::TcpListener | Type::TcpStream | Type::JoinHandle(_) | Type::Sender(_) | Type::Receiver(_) | Type::Mutex(_) | Type::Named(_)) {
+                            if matches!(in_t, Type::Box(_) | Type::Rc(_) | Type::RefCell(_) | Type::Str | Type::TcpListener | Type::TcpStream | Type::Instant | Type::JoinHandle(_) | Type::Sender(_) | Type::Receiver(_) | Type::Mutex(_) | Type::Named(_)) {
                                 let c_ty = self.to_c_type(&in_t);
                                 format!("(({})(uintptr_t)_ox_unwrap({}))", c_ty, t)
                             } else {
@@ -2819,6 +2950,13 @@ impl CodegenC {
                     }
                     "json::parse" => format!("_ox_json_parse({})", self.compile_expr(&args[0])),
                     "json::get" => format!("_ox_json_get({}, {})", self.compile_expr(&args[0]), self.compile_expr(&args[1])),
+                    "crypto::hash" => format!("_ox_crypto_hash({})", self.compile_expr(&args[0])),
+                    "crypto::crc32" => format!("_ox_crypto_crc32({})", self.compile_expr(&args[0])),
+                    "base64::encode" => format!("_ox_base64_encode({})", self.compile_expr(&args[0])),
+                    "base64::decode" => format!("_ox_base64_decode({})", self.compile_expr(&args[0])),
+                    "time::now_millis" => "_ox_time_now_millis()".to_string(),
+                    "time::now_secs" => "_ox_time_now_secs()".to_string(),
+                    "time::Instant::now" | "Instant::now" => "_ox_instant_now()".to_string(),
                     "get_env" => format!("_ox_get_env({})", self.compile_expr(&args[0])),
                     "exit" => format!("exit((int)({}))", self.compile_expr(&args[0])),
                     "map_new" => "_ox_map_new()".to_string(),

@@ -24,6 +24,7 @@ pub fn mangle_type(ty: &Type) -> String {
         Type::Mutex(inner) => format!("Mutex__{}", mangle_type(inner)),
         Type::TcpListener => "TcpListener".to_string(),
         Type::TcpStream => "TcpStream".to_string(),
+        Type::Instant => "Instant".to_string(),
         Type::Tuple(types) => {
             let inner = types.iter().map(mangle_type).collect::<Vec<_>>().join("_");
             format!("tuple_{}", inner)
@@ -1189,6 +1190,11 @@ impl Monomorphizer {
                         "http::get" | "http::post" => Ok(Type::Result(Box::new(Type::Str), Box::new(Type::Str))),
                         "json::parse" => Ok(Type::Result(Box::new(Type::Named("Map".to_string())), Box::new(Type::Str))),
                         "json::get" => Ok(Type::Option(Box::new(Type::Str))),
+                        "crypto::hash" | "base64::encode" => Ok(Type::Str),
+                        "crypto::crc32" => Ok(Type::Int),
+                        "base64::decode" => Ok(Type::Result(Box::new(Type::Str), Box::new(Type::Str))),
+                        "time::now_millis" | "time::now_secs" => Ok(Type::Int),
+                        "time::Instant::now" | "Instant::now" => Ok(Type::Instant),
                         "len" | "to_int" => Ok(Type::Int),
                         "to_float" => Ok(Type::Float),
                         "to_char" => Ok(Type::Char),
@@ -1266,6 +1272,7 @@ impl Monomorphizer {
                         Type::TcpStream if method == "write" => return Ok(Type::Result(Box::new(Type::Int), Box::new(Type::Str))),
                         Type::TcpStream if method == "read" => return Ok(Type::Result(Box::new(Type::Str), Box::new(Type::Str))),
                         Type::TcpStream if method == "close" => return Ok(Type::Void),
+                        Type::Instant if method == "elapsed_millis" || method == "elapsed_micros" => return Ok(Type::Int),
                         _ => {}
                     }
                 }

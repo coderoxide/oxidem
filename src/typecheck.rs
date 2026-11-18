@@ -1338,6 +1338,14 @@ impl TypeChecker {
                         if !args.is_empty() { return Err(format!("Tip Hatası [{}:{}]: 'close()' argüman beklemez", span.line, span.col)); }
                         return Ok(Type::Void);
                     }
+                    Type::Instant if method == "elapsed_millis" => {
+                        if !args.is_empty() { return Err(format!("Tip Hatası [{}:{}]: 'elapsed_millis()' argüman beklemez", span.line, span.col)); }
+                        return Ok(Type::Int);
+                    }
+                    Type::Instant if method == "elapsed_micros" => {
+                        if !args.is_empty() { return Err(format!("Tip Hatası [{}:{}]: 'elapsed_micros()' argüman beklemez", span.line, span.col)); }
+                        return Ok(Type::Int);
+                    }
                     Type::Box(ref inner) | Type::Rc(ref inner) => {
                         let mut curr_inner = (**inner).clone();
                         while let Type::Box(in_t) | Type::Rc(in_t) = curr_inner {
@@ -1519,6 +1527,42 @@ impl TypeChecker {
                             return Err(format!("Tip Hatası [{}:{}]: 'json::get' (str, str) bekler", span.line, span.col));
                         }
                         return Ok(Type::Option(Box::new(Type::Str)));
+                    }
+                    "crypto::hash" => {
+                        if args.len() != 1 { return Err(format!("Tip Hatası [{}:{}]: 'crypto::hash' 1 argüman bekler: (data: str)", span.line, span.col)); }
+                        let ty = self.check_expr(&args[0])?;
+                        if !self.are_types_compatible(&Type::Str, &ty) { return Err(format!("Tip Hatası [{}:{}]: 'crypto::hash' 'str' veri bekler", span.line, span.col)); }
+                        return Ok(Type::Str);
+                    }
+                    "crypto::crc32" => {
+                        if args.len() != 1 { return Err(format!("Tip Hatası [{}:{}]: 'crypto::crc32' 1 argüman bekler: (data: str)", span.line, span.col)); }
+                        let ty = self.check_expr(&args[0])?;
+                        if !self.are_types_compatible(&Type::Str, &ty) { return Err(format!("Tip Hatası [{}:{}]: 'crypto::crc32' 'str' veri bekler", span.line, span.col)); }
+                        return Ok(Type::Int);
+                    }
+                    "base64::encode" => {
+                        if args.len() != 1 { return Err(format!("Tip Hatası [{}:{}]: 'base64::encode' 1 argüman bekler: (data: str)", span.line, span.col)); }
+                        let ty = self.check_expr(&args[0])?;
+                        if !self.are_types_compatible(&Type::Str, &ty) { return Err(format!("Tip Hatası [{}:{}]: 'base64::encode' 'str' veri bekler", span.line, span.col)); }
+                        return Ok(Type::Str);
+                    }
+                    "base64::decode" => {
+                        if args.len() != 1 { return Err(format!("Tip Hatası [{}:{}]: 'base64::decode' 1 argüman bekler: (encoded: str)", span.line, span.col)); }
+                        let ty = self.check_expr(&args[0])?;
+                        if !self.are_types_compatible(&Type::Str, &ty) { return Err(format!("Tip Hatası [{}:{}]: 'base64::decode' 'str' veri bekler", span.line, span.col)); }
+                        return Ok(Type::Result(Box::new(Type::Str), Box::new(Type::Str)));
+                    }
+                    "time::now_millis" => {
+                        if !args.is_empty() { return Err(format!("Tip Hatası [{}:{}]: 'time::now_millis()' argüman beklemez", span.line, span.col)); }
+                        return Ok(Type::Int);
+                    }
+                    "time::now_secs" => {
+                        if !args.is_empty() { return Err(format!("Tip Hatası [{}:{}]: 'time::now_secs()' argüman beklemez", span.line, span.col)); }
+                        return Ok(Type::Int);
+                    }
+                    "time::Instant::now" | "Instant::now" => {
+                        if !args.is_empty() { return Err(format!("Tip Hatası [{}:{}]: 'Instant::now()' argüman beklemez", span.line, span.col)); }
+                        return Ok(Type::Instant);
                     }
                     "Box::new" => {
                         if args.len() != 1 {
