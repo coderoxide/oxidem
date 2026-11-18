@@ -1296,6 +1296,85 @@ server_handle.join().unwrap();
 * Port çözümleme (`inet_pton`, `htons`, `sockaddr_in`), hata güvenliği ve tampon yönetimi GCC `-O2` seviyesinde optimize edilir.
 * Yorumlayıcı (`oxide run`) ve GCC native binary (`oxide build`) arasında %100 birebir davranış ve çıktı uyumu garanti edilir.
 
+---
+
+## 26. HTTP Sunucusu, REST API ve JSON Desteği (HTTP & JSON)
+
+Oxide (v0.19.0+), yerleşik yüksek performanslı JSON serileştirme/çözümleme motoruna ve REST API geliştirmeyi kolaylaştıran HTTP istek/yanıt API'sine sahiptir.
+
+### 26.1. JSON Serileştirme ve Çözümleme (`json::`)
+* `json::stringify(val) -> str`: `Map`, `struct`, sayılar, metinler ve dizileri standart JSON metnine dönüştürür.
+* `json::parse(json_str: str) -> Result<Map, str>`: JSON metnini ayrıştırarak doğrudan `Map` veri yapısına döner.
+* `json::get(json_str: str, key: str) -> Option<str>`: JSON metnini tamamen parse etmeden, istenen anahtarın değerini hızlıca `Some(deger)` veya `None` olarak çıkarır.
+
+```rust
+let m = map_new();
+m.set("ad", "Oxide");
+m.set("surum", "v0.19.0");
+
+let json_metni = json::stringify(m);
+println("JSON:", json_metni); // {"ad": "Oxide", "surum": "v0.19.0"}
+
+let map_veri = json::parse(json_metni)?;
+println("İsim:", map_veri.get("ad")); // "Oxide"
+
+let surum = json::get(json_metni, "surum");
+if surum.is_some() {
+    println("Sürüm:", surum.unwrap()); // "v0.19.0"
+}
+```
+
+### 26.2. HTTP İstek ve Yanıt Yardımcıları (`http::`)
+Gelen ham HTTP isteğini ayrıştırmak ve standart HTTP yanıtları oluşturmak için kullanılır:
+* `http::request_method(raw_req: str) -> str`: İsteğin HTTP metodunu döner (`"GET"`, `"POST"`, vb.).
+* `http::request_path(raw_req: str) -> str`: İsteğin URL yolunu döner (örn: `"/api/users"`).
+* `http::request_body(raw_req: str) -> str`: `\r\n\r\n` sonrasındaki gövde (body) verisini metin olarak döner.
+* `http::response(status: int, content_type: str, body: str) -> str`: Standart HTTP/1.1 yanıt metnini (`HTTP/1.1 200 OK\r\n...`) üretir.
+
+### 26.3. Yerleşik HTTP İstemcisi (`http::get`, `http::post`)
+Dış HTTP servislerine bağlanmak veya kendi sunucunuzu test etmek için doğrudan dahili istemci fonksiyonları mevcuttur:
+* `http::get(url: str) -> Result<str, str>`: Hedef URL'e HTTP GET isteği gönderir ve yanıt gövdesini (body) döner.
+* `http::post(url: str, body: str, content_type: str) -> Result<str, str>`: Hedef URL'e HTTP POST isteği gönderir ve yanıt gövdesini döner.
+
+### 26.4. Uçtan Uca REST API ve İstemci Örneği
+```rust
+// Arka planda REST API sunucusu
+let sunucu = thread::spawn(|| {
+    let listener = TcpListener::bind("127.0.0.1:8080").unwrap();
+    let client = listener.accept().unwrap();
+    let raw = client.read().unwrap();
+
+    let method = http::request_method(raw);
+    let path = http::request_path(raw);
+
+    if method == "POST" && path == "/api/ekle" {
+        let req_body = http::request_body(raw);
+        let kullanici = json::get(req_body, "kullanici").unwrap();
+
+        let resp_body = "{\"sonuc\": \"Eklendi\", \"user\": \"" + kullanici + "\"}";
+        let resp = http::response(201, "application/json", resp_body);
+        client.write(resp).unwrap();
+    }
+    client.close();
+    0
+});
+
+thread::sleep(100);
+
+// İstemci ile REST API çağrısı
+let gonderilen = "{\"kullanici\": \"Demir\"}";
+let yanit = http::post("http://127.0.0.1:8080/api/ekle", gonderilen, "application/json").unwrap();
+println("API Yanıtı:", yanit); // {"sonuc": "Eklendi", "user": "Demir"}
+
+sunucu.join().unwrap();
+```
+
+### 26.5. Native Berkeley Sockets & Arena Optimizasyonu
+* Oxide Yorumlayıcısı: Rust `std::net::TcpStream` ve standart string araçlarıyla sıfır ek yükle çalışır.
+* Native C Binary (`oxide build`): POSIX Berkeley Sockets ve arena tahsisçisi (`_ox_arena_alloc`) üzerinden çalışır; bellek sızıntısı olmadan maksimum GCC `-O2` verimiyle çalışır.
+* Yorumlayıcı (`oxide run`) ve GCC native binary (`oxide build`) arasında %100 çıktı ve davranış uyumu (parity) sağlanır.
+
+
 
 
 

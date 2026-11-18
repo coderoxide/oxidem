@@ -472,6 +472,142 @@ impl Interpreter {
                     _ => return Err(format!("Hata [{}:{}]: 'TcpStream::connect' adres parametresini 'str' bekler", span.line, span.col)),
                 }
             }
+            "http::get" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'http::get' 1 argüman bekler", span.line, span.col));
+                }
+                let url = args[0].to_string();
+                let (host, port, path) = parse_url_parts(&url);
+                match std::net::TcpStream::connect(format!("{}:{}", host, port)) {
+                    Ok(mut stream) => {
+                        let req = format!("GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n", path, host);
+                        if let Err(e) = stream.write_all(req.as_bytes()) {
+                            return Ok(Value::Err(Box::new(Value::Str(e.to_string()))));
+                        }
+                        let mut resp = String::new();
+                        if let Err(e) = stream.read_to_string(&mut resp) {
+                            return Ok(Value::Err(Box::new(Value::Str(e.to_string()))));
+                        }
+                        let body = if let Some(idx) = resp.find("\r\n\r\n") {
+                            resp[idx + 4..].to_string()
+                        } else if let Some(idx) = resp.find("\n\n") {
+                            resp[idx + 2..].to_string()
+                        } else {
+                            resp
+                        };
+                        return Ok(Value::Ok(Box::new(Value::Str(body))));
+                    }
+                    Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
+            }
+            "http::post" => {
+                if args.len() != 3 {
+                    return Err(format!("Hata [{}:{}]: 'http::post' 3 argüman bekler", span.line, span.col));
+                }
+                let url = args[0].to_string();
+                let body_data = args[1].to_string();
+                let content_type = args[2].to_string();
+                let (host, port, path) = parse_url_parts(&url);
+                match std::net::TcpStream::connect(format!("{}:{}", host, port)) {
+                    Ok(mut stream) => {
+                        let req = format!(
+                            "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            path, host, content_type, body_data.len(), body_data
+                        );
+                        if let Err(e) = stream.write_all(req.as_bytes()) {
+                            return Ok(Value::Err(Box::new(Value::Str(e.to_string()))));
+                        }
+                        let mut resp = String::new();
+                        if let Err(e) = stream.read_to_string(&mut resp) {
+                            return Ok(Value::Err(Box::new(Value::Str(e.to_string()))));
+                        }
+                        let body = if let Some(idx) = resp.find("\r\n\r\n") {
+                            resp[idx + 4..].to_string()
+                        } else if let Some(idx) = resp.find("\n\n") {
+                            resp[idx + 2..].to_string()
+                        } else {
+                            resp
+                        };
+                        return Ok(Value::Ok(Box::new(Value::Str(body))));
+                    }
+                    Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
+            }
+            "http::request_method" => {
+                let raw = args.get(0).map(|v| v.to_string()).unwrap_or_default();
+                let m = raw.lines().next().unwrap_or("").split_whitespace().next().unwrap_or("GET").to_string();
+                return Ok(Value::Str(m));
+            }
+            "http::request_path" => {
+                let raw = args.get(0).map(|v| v.to_string()).unwrap_or_default();
+                let p = raw.lines().next().unwrap_or("").split_whitespace().nth(1).unwrap_or("/").to_string();
+                return Ok(Value::Str(p));
+            }
+            "http::request_body" => {
+                let raw = args.get(0).map(|v| v.to_string()).unwrap_or_default();
+                let b = if let Some(idx) = raw.find("\r\n\r\n") {
+                    raw[idx + 4..].to_string()
+                } else if let Some(idx) = raw.find("\n\n") {
+                    raw[idx + 2..].to_string()
+                } else {
+                    String::new()
+                };
+                return Ok(Value::Str(b));
+            }
+            "http::response" => {
+                if args.len() != 3 {
+                    return Err(format!("Hata [{}:{}]: 'http::response' 3 argüman bekler", span.line, span.col));
+                }
+                let status = match args[0] {
+                    Value::Int(n) => n,
+                    _ => 200,
+                };
+                let content_type = args[1].to_string();
+                let body = args[2].to_string();
+                let phrase = match status {
+                    200 => "OK",
+                    201 => "Created",
+                    204 => "No Content",
+                    400 => "Bad Request",
+                    401 => "Unauthorized",
+                    403 => "Forbidden",
+                    404 => "Not Found",
+                    500 => "Internal Server Error",
+                    _ => "OK",
+                };
+                let resp = format!(
+                    "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    status, phrase, content_type, body.len(), body
+                );
+                return Ok(Value::Str(resp));
+            }
+            "json::stringify" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'json::stringify' 1 argüman bekler", span.line, span.col));
+                }
+                return Ok(Value::Str(value_to_json_str(&args[0])));
+            }
+            "json::parse" => {
+                if args.len() != 1 {
+                    return Err(format!("Hata [{}:{}]: 'json::parse' 1 argüman bekler", span.line, span.col));
+                }
+                let s = args[0].to_string();
+                match json_parse_to_map(&s) {
+                    Ok(m) => return Ok(Value::Ok(Box::new(Value::Map(shared(m))))),
+                    Err(e) => return Ok(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
+            "json::get" => {
+                if args.len() != 2 {
+                    return Err(format!("Hata [{}:{}]: 'json::get' 2 argüman bekler", span.line, span.col));
+                }
+                let s = args[0].to_string();
+                let key = args[1].to_string();
+                match json_get_str(&s, &key) {
+                    Some(v) => return Ok(Value::Some(Box::new(Value::Str(v)))),
+                    None => return Ok(Value::None),
+                }
+            }
             "format" => {
                 if args.is_empty() {
                     return Ok(Value::Str(String::new()));
@@ -2401,4 +2537,188 @@ impl Interpreter {
             _ => false,
         }
     }
+}
+
+fn parse_url_parts(url: &str) -> (String, u16, String) {
+    let without_proto = if let Some(stripped) = url.strip_prefix("http://") {
+        stripped
+    } else {
+        url
+    };
+    let (host_port, path) = if let Some(slash_idx) = without_proto.find('/') {
+        (&without_proto[..slash_idx], &without_proto[slash_idx..])
+    } else {
+        (without_proto, "/")
+    };
+    let (host, port) = if let Some(colon_idx) = host_port.find(':') {
+        (&host_port[..colon_idx], host_port[colon_idx + 1..].parse::<u16>().unwrap_or(80))
+    } else {
+        (host_port, 80)
+    };
+    (host.to_string(), port, path.to_string())
+}
+
+fn value_to_json_str(val: &Value) -> String {
+    match val {
+        Value::Int(n) => n.to_string(),
+        Value::Float(f) => f.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Str(s) => {
+            let esc = s
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
+                .replace('\t', "\\t");
+            format!("\"{}\"", esc)
+        }
+        Value::Char(c) => format!("\"{}\"", c),
+        Value::U8(b) => b.to_string(),
+        Value::Array(a) => {
+            let arr = a.lock().unwrap();
+            let items: Vec<String> = arr.iter().map(value_to_json_str).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Value::Map(m) => {
+            let map = m.lock().unwrap();
+            let mut entries: Vec<String> = Vec::new();
+            for (k, v) in map.iter() {
+                entries.push(format!("\"{}\": {}", k, value_to_json_str(v)));
+            }
+            format!("{{{}}}", entries.join(", "))
+        }
+        Value::Struct { fields, .. } => {
+            let map = fields.lock().unwrap();
+            let mut entries: Vec<String> = Vec::new();
+            for (k, v) in map.iter() {
+                entries.push(format!("\"{}\": {}", k, value_to_json_str(v)));
+            }
+            format!("{{{}}}", entries.join(", "))
+        }
+        Value::Some(v) => value_to_json_str(v),
+        Value::None => "null".to_string(),
+        Value::Ok(v) => value_to_json_str(v),
+        Value::Err(e) => format!("{{\"error\": {}}}", value_to_json_str(e)),
+        _ => "\"\"".to_string(),
+    }
+}
+
+fn json_get_str(json: &str, target_key: &str) -> Option<String> {
+    let key_pat = format!("\"{}\"", target_key);
+    let key_pos = json.find(&key_pat)?;
+    let after_key = &json[key_pos + key_pat.len()..];
+    let colon_pos = after_key.find(':')?;
+    let rest = after_key[colon_pos + 1..].trim_start();
+    if rest.starts_with('"') {
+        let mut in_esc = false;
+        let mut val = String::new();
+        for ch in rest[1..].chars() {
+            if in_esc {
+                val.push(ch);
+                in_esc = false;
+            } else if ch == '\\' {
+                in_esc = true;
+            } else if ch == '"' {
+                return Some(val);
+            } else {
+                val.push(ch);
+            }
+        }
+        Some(val)
+    } else {
+        let end_idx = rest.find(|c: char| c == ',' || c == '}' || c == ']' || c.is_whitespace()).unwrap_or(rest.len());
+        Some(rest[..end_idx].to_string())
+    }
+}
+
+fn json_parse_to_map(json: &str) -> Result<HashMap<String, Value>, String> {
+    let trimmed = json.trim();
+    if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+        return Err("JSON nesnesi '{' ile başlamalı ve '}' ile bitmelidir".to_string());
+    }
+    let inner = &trimmed[1..trimmed.len() - 1].trim();
+    if inner.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut map = HashMap::new();
+    let mut i = 0;
+    let chars: Vec<char> = inner.chars().collect();
+    let n = chars.len();
+
+    while i < n {
+        while i < n && (chars[i].is_whitespace() || chars[i] == ',') {
+            i += 1;
+        }
+        if i >= n { break; }
+
+        if chars[i] != '"' {
+            return Err(format!("JSON anahtar tırnak ile başlamalı, bulunan: '{}'", chars[i]));
+        }
+        i += 1;
+        let mut key = String::new();
+        let mut in_esc = false;
+        while i < n {
+            if in_esc {
+                key.push(chars[i]);
+                in_esc = false;
+            } else if chars[i] == '\\' {
+                in_esc = true;
+            } else if chars[i] == '"' {
+                i += 1;
+                break;
+            } else {
+                key.push(chars[i]);
+            }
+            i += 1;
+        }
+
+        while i < n && chars[i].is_whitespace() { i += 1; }
+        if i >= n || chars[i] != ':' {
+            return Err("JSON anahtardan sonra ':' bekleniyordu".to_string());
+        }
+        i += 1;
+        while i < n && chars[i].is_whitespace() { i += 1; }
+        if i >= n { break; }
+
+        let mut val = String::new();
+        if chars[i] == '"' {
+            i += 1;
+            let mut val_esc = false;
+            while i < n {
+                if val_esc {
+                    val.push(chars[i]);
+                    val_esc = false;
+                } else if chars[i] == '\\' {
+                    val_esc = true;
+                } else if chars[i] == '"' {
+                    i += 1;
+                    break;
+                } else {
+                    val.push(chars[i]);
+                }
+                i += 1;
+            }
+        } else if chars[i] == '{' || chars[i] == '[' {
+            let open = chars[i];
+            let close = if open == '{' { '}' } else { ']' };
+            let mut depth = 1;
+            val.push(open);
+            i += 1;
+            while i < n && depth > 0 {
+                if chars[i] == open { depth += 1; }
+                else if chars[i] == close { depth -= 1; }
+                val.push(chars[i]);
+                i += 1;
+            }
+        } else {
+            while i < n && chars[i] != ',' && chars[i] != '}' && !chars[i].is_whitespace() {
+                val.push(chars[i]);
+                i += 1;
+            }
+        }
+
+        map.insert(key, Value::Str(val));
+    }
+
+    Ok(map)
 }

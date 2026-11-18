@@ -7,7 +7,7 @@ Bu dosya, Rust tabanlı Oxide (`.ox`) programlama dili ve derleyici/yorumlayıc�
 ## 📊 Genel Durum
 - **Proje Adı:** Oxide (`.ox`)
 - **Geliştirme Dili:** Rust (2024 edition)
-- **Mevcut Sürüm:** v0.18.0 (Ağ ve Soket Programlama TcpListener/TcpStream, Eşzamanlılık ve Çoklu İş Parçacığı thread::spawn/sleep, Mesajlaşma Kanalları channel/send/recv, Karşılıklı Dışlama Mutex<T>, Derleme Zamanı Sabitleri const, Standart Dosya Sistemi fs::, Sistem ve Çevre Değişkenleri env::, Akıllı İşaretçiler Box/Rc/RefCell, Target Build Dizin Mimarisi, oxide.lock Kilit Dosyası, oxide clean, Operator Overloading & Traits, Slices & Range Indexing, String Interpolation f"...", Tuples & Destructuring, Trait & Interface System, Option/Result & Try '?' Operator, Generics & Monomorphization, Closures, Arena Management, HIR Optimizer, Test Engine & oxide.toml)
+- **Mevcut Sürüm:** v0.19.0 (HTTP Sunucusu, REST API & JSON Desteği http::get/post/response/request_*, json::stringify/parse/get, Ağ ve Soket Programlama TcpListener/TcpStream, Eşzamanlılık ve Çoklu İş Parçacığı thread::spawn/sleep, Mesajlaşma Kanalları channel/send/recv, Karşılıklı Dışlama Mutex<T>, Derleme Zamanı Sabitleri const, Standart Dosya Sistemi fs::, Sistem ve Çevre Değişkenleri env::, Akıllı İşaretçiler Box/Rc/RefCell, Target Build Dizin Mimarisi, oxide.lock Kilit Dosyası, oxide clean, Operator Overloading & Traits, Slices & Range Indexing, String Interpolation f"...", Tuples & Destructuring, Trait & Interface System, Option/Result & Try '?' Operator, Generics & Monomorphization, Closures, Arena Management, HIR Optimizer, Test Engine & oxide.toml)
 - **Bağımlılık Durumu:** Sıfır dış bağımlılık (Pure Rust Standard Library)
 - **Çalışma Modları:** Yorumlayıcı (`run`), Tip Denetleyici (`check`), Native GCC Derleyici (`build`), Token Dökücü (`tokens`), AST Dökücü (`ast`), HIR Dökücü (`hir`), REPL (`repl`)
 
@@ -350,10 +350,31 @@ Bu dosya, Rust tabanlı Oxide (`.ox`) programlama dili ve derleyici/yorumlayıc�
 
 ---
 
-### Aşama 23: HTTP Sunucusu / REST API & JSON Serileştirme (Sıradaki Hedef)
-- [ ] **HTTP Protokol Çözümleyici & İstek/Yanıt:** `http::Request` (metot, yol, başlıklar, gövde) ve `http::Response` (durum kodu, başlıklar, gövde).
-- [ ] **Yerleşik JSON Parser / Stringifier:** Nesneleri, dizileri ve struct'ları JSON metnine (`json::stringify`) ve JSON metnini veri tiplerine (`json::parse`) dönüştürme.
-- [ ] **Hafif REST API Web Sunucusu:** `http::Server` ile yönlendirme (routing), GET/POST endpoint'leri ve statik dosya sunumu.
+### Aşama 23: HTTP Sunucusu / REST API & JSON Serileştirme (Tamamlandı)
+- [x] **Yerleşik JSON Serileştirme & Çözümleme (`json::`):**
+  - `json::stringify(val) -> str`: Map, struct, sayılar, metinler ve dizileri standart JSON metnine dönüştürme.
+  - `json::parse(json_str: str) -> Result<Map, str>`: JSON nesnesini doğrudan `Map` veri yapısına çözümleme.
+  - `json::get(json_str: str, key: str) -> Option<str>`: Hızlı anahtar-değer çıkarımı (key extraction).
+- [x] **HTTP İstek ve Yanıt Yardımcıları (`http::`):**
+  - `http::request_method(raw_req: str) -> str`: HTTP metodunu ayrıştırma (`GET`, `POST`, vb.).
+  - `http::request_path(raw_req: str) -> str`: URL istek yolunu ayrıştırma (örn: `/api/status`).
+  - `http::request_body(raw_req: str) -> str`: İstek gövdesini (body) ayrıştırma.
+  - `http::response(status: int, content_type: str, body: str) -> str`: Standart HTTP/1.1 yanıtı oluşturma.
+- [x] **Yerleşik HTTP İstemcisi (`http::get`, `http::post`):**
+  - `http::get(url: str) -> Result<str, str>`: Hedef HTTP sunucusuna bağlanıp GET isteği gönderme ve yanıt gövdesini alma.
+  - `http::post(url: str, body: str, content_type: str) -> Result<str, str>`: POST isteği gönderme ve yanıt gövdesini alma.
+- [x] **Native C Transpiler & GCC Optimizasyonu:**
+  - Berkeley Sockets ve arena tabanlı C kod üretimi (`_ox_http_request_method`, `_ox_http_request_path`, `_ox_http_request_body`, `_ox_http_response`, `_ox_http_get`, `_ox_http_post`, `_ox_json_stringify_map`, `_ox_json_parse`, `_ox_json_get`).
+  - GCC `-O2` seviyesinde optimize native binary üretimi.
+- [x] **Otomatik Entegrasyon Testi:** `test_http_and_json_support` ile 34/34 test başarıyla geçti.
+
+---
+
+### Aşama 24: Kriptografi & Güvenlik ve Zamanlama Modülleri (Sıradaki Hedef)
+- [ ] **Kriptografik Özet Fonksiyonları (`crypto::sha256`, `crypto::md5`):** Güvenli veri doğrulama ve parola özetleme.
+- [ ] **Base64 Kodlama & Çözme (`base64::encode`, `base64::decode`):** Ağ ve veri aktarımında ikili veri kodlama.
+- [ ] **Tarih & Zamanlama API'si (`time::now()`, `time::Instant`, `time::duration`):** Yüksek hassasiyetli süre ölçümü ve zaman damgası.
+
 
 
 

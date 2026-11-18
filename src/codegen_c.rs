@@ -171,6 +171,11 @@ impl CodegenC {
                     }
                     "TcpListener::bind" | "net::TcpListener::bind" => Type::Result(Box::new(Type::TcpListener), Box::new(Type::Str)),
                     "TcpStream::connect" | "net::TcpStream::connect" => Type::Result(Box::new(Type::TcpStream), Box::new(Type::Str)),
+                    "map_new" => Type::Named("Map".to_string()),
+                    "http::request_method" | "http::request_path" | "http::request_body" | "http::response" | "json::stringify" => Type::Str,
+                    "http::get" | "http::post" => Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+                    "json::parse" => Type::Result(Box::new(Type::Named("Map".to_string())), Box::new(Type::Str)),
+                    "json::get" => Type::Option(Box::new(Type::Str)),
                     _ => self.fn_ret_types.get(callee).cloned().unwrap_or(Type::Void),
                 }
             }
@@ -1640,6 +1645,290 @@ impl CodegenC {
         self.write_line("    }");
         self.write_line("}");
         self.write_line("");
+        self.write_line("/* HTTP & JSON Functions */");
+        self.write_line("static inline const char* _ox_http_request_method(const char* raw) {");
+        self.write_line("    if (!raw) return \"GET\";");
+        self.write_line("    const char* space = strchr(raw, ' ');");
+        self.write_line("    if (!space) return \"GET\";");
+        self.write_line("    size_t len = space - raw;");
+        self.write_line("    char* m = (char*)_ox_arena_alloc(len + 1);");
+        self.write_line("    strncpy(m, raw, len);");
+        self.write_line("    m[len] = '\\0';");
+        self.write_line("    return m;");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline const char* _ox_http_request_path(const char* raw) {");
+        self.write_line("    if (!raw) return \"/\";");
+        self.write_line("    const char* space1 = strchr(raw, ' ');");
+        self.write_line("    if (!space1) return \"/\";");
+        self.write_line("    space1++;");
+        self.write_line("    const char* space2 = strchr(space1, ' ');");
+        self.write_line("    if (!space2) space2 = strchr(space1, '\\r');");
+        self.write_line("    if (!space2) space2 = strchr(space1, '\\n');");
+        self.write_line("    if (!space2) return space1;");
+        self.write_line("    size_t len = space2 - space1;");
+        self.write_line("    char* p = (char*)_ox_arena_alloc(len + 1);");
+        self.write_line("    strncpy(p, space1, len);");
+        self.write_line("    p[len] = '\\0';");
+        self.write_line("    return p;");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline const char* _ox_http_request_body(const char* raw) {");
+        self.write_line("    if (!raw) return \"\";");
+        self.write_line("    const char* sep = strstr(raw, \"\\r\\n\\r\\n\");");
+        self.write_line("    if (sep) return sep + 4;");
+        self.write_line("    sep = strstr(raw, \"\\n\\n\");");
+        self.write_line("    if (sep) return sep + 2;");
+        self.write_line("    return \"\";");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline const char* _ox_http_response(int64_t status, const char* content_type, const char* body) {");
+        self.write_line("    if (!content_type) content_type = \"text/plain\";");
+        self.write_line("    if (!body) body = \"\";");
+        self.write_line("    const char* phrase = \"OK\";");
+        self.write_line("    switch (status) {");
+        self.write_line("        case 200: phrase = \"OK\"; break;");
+        self.write_line("        case 201: phrase = \"Created\"; break;");
+        self.write_line("        case 204: phrase = \"No Content\"; break;");
+        self.write_line("        case 400: phrase = \"Bad Request\"; break;");
+        self.write_line("        case 401: phrase = \"Unauthorized\"; break;");
+        self.write_line("        case 403: phrase = \"Forbidden\"; break;");
+        self.write_line("        case 404: phrase = \"Not Found\"; break;");
+        self.write_line("        case 500: phrase = \"Internal Server Error\"; break;");
+        self.write_line("        default: phrase = \"OK\"; break;");
+        self.write_line("    }");
+        self.write_line("    size_t body_len = strlen(body);");
+        self.write_line("    char* resp = (char*)_ox_arena_alloc(body_len + 512);");
+        self.write_line("    sprintf(resp, \"HTTP/1.1 %lld %s\\r\\nContent-Type: %s\\r\\nContent-Length: %zu\\r\\nConnection: close\\r\\n\\r\\n%s\",");
+        self.write_line("            (long long)status, phrase, content_type, body_len, body);");
+        self.write_line("    return resp;");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxResult _ox_http_get(const char* url) {");
+        self.write_line("    if (!url) return _ox_err((int64_t)(uintptr_t)\"Null URL\");");
+        self.write_line("    const char* u = url;");
+        self.write_line("    if (strncmp(u, \"http://\", 7) == 0) u += 7;");
+        self.write_line("    char host[128] = \"127.0.0.1\";");
+        self.write_line("    int port = 80;");
+        self.write_line("    const char* slash = strchr(u, '/');");
+        self.write_line("    const char* path = slash ? slash : \"/\";");
+        self.write_line("    size_t host_port_len = slash ? (size_t)(slash - u) : strlen(u);");
+        self.write_line("    char host_port[128];");
+        self.write_line("    if (host_port_len >= sizeof(host_port)) host_port_len = sizeof(host_port) - 1;");
+        self.write_line("    strncpy(host_port, u, host_port_len);");
+        self.write_line("    host_port[host_port_len] = '\\0';");
+        self.write_line("    const char* colon = strchr(host_port, ':');");
+        self.write_line("    if (colon) {");
+        self.write_line("        size_t hlen = colon - host_port;");
+        self.write_line("        if (hlen < sizeof(host)) { strncpy(host, host_port, hlen); host[hlen] = '\\0'; }");
+        self.write_line("        port = atoi(colon + 1);");
+        self.write_line("    } else {");
+        self.write_line("        strncpy(host, host_port, sizeof(host) - 1);");
+        self.write_line("    }");
+        self.write_line("    int fd = socket(AF_INET, SOCK_STREAM, 0);");
+        self.write_line("    if (fd < 0) return _ox_err((int64_t)(uintptr_t)\"Socket olusturulamadi\");");
+        self.write_line("    struct sockaddr_in sin;");
+        self.write_line("    memset(&sin, 0, sizeof(sin));");
+        self.write_line("    sin.sin_family = AF_INET;");
+        self.write_line("    sin.sin_port = htons(port);");
+        self.write_line("    inet_pton(AF_INET, host, &sin.sin_addr);");
+        self.write_line("    int conn_res = -1;");
+        self.write_line("    for (int retry = 0; retry < 6; retry++) {");
+        self.write_line("        conn_res = connect(fd, (struct sockaddr*)&sin, sizeof(sin));");
+        self.write_line("        if (conn_res == 0) break;");
+        self.write_line("        if (retry < 5) usleep(50000);");
+        self.write_line("    }");
+        self.write_line("    if (conn_res < 0) {");
+        self.write_line("        close(fd);");
+        self.write_line("        return _ox_err((int64_t)(uintptr_t)\"Sunucuya baglanilamadi\");");
+        self.write_line("    }");
+        self.write_line("    char req[512];");
+        self.write_line("    sprintf(req, \"GET %s HTTP/1.1\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n\", path, host);");
+        self.write_line("    send(fd, req, strlen(req), 0);");
+        self.write_line("    char* buf = (char*)_ox_arena_alloc(65536);");
+        self.write_line("    size_t total = 0;");
+        self.write_line("    ssize_t n;");
+        self.write_line("    while ((n = recv(fd, buf + total, 65535 - total, 0)) > 0) {");
+        self.write_line("        total += n;");
+        self.write_line("        if (total >= 65535) break;");
+        self.write_line("    }");
+        self.write_line("    buf[total] = '\\0';");
+        self.write_line("    close(fd);");
+        self.write_line("    const char* body = strstr(buf, \"\\r\\n\\r\\n\");");
+        self.write_line("    if (body) body += 4;");
+        self.write_line("    else {");
+        self.write_line("        body = strstr(buf, \"\\n\\n\");");
+        self.write_line("        if (body) body += 2;");
+        self.write_line("        else body = buf;");
+        self.write_line("    }");
+        self.write_line("    return _ox_ok((int64_t)(uintptr_t)body);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxResult _ox_http_post(const char* url, const char* body_data, const char* content_type) {");
+        self.write_line("    if (!url) return _ox_err((int64_t)(uintptr_t)\"Null URL\");");
+        self.write_line("    if (!body_data) body_data = \"\";");
+        self.write_line("    if (!content_type) content_type = \"application/json\";");
+        self.write_line("    const char* u = url;");
+        self.write_line("    if (strncmp(u, \"http://\", 7) == 0) u += 7;");
+        self.write_line("    char host[128] = \"127.0.0.1\";");
+        self.write_line("    int port = 80;");
+        self.write_line("    const char* slash = strchr(u, '/');");
+        self.write_line("    const char* path = slash ? slash : \"/\";");
+        self.write_line("    size_t host_port_len = slash ? (size_t)(slash - u) : strlen(u);");
+        self.write_line("    char host_port[128];");
+        self.write_line("    if (host_port_len >= sizeof(host_port)) host_port_len = sizeof(host_port) - 1;");
+        self.write_line("    strncpy(host_port, u, host_port_len);");
+        self.write_line("    host_port[host_port_len] = '\\0';");
+        self.write_line("    const char* colon = strchr(host_port, ':');");
+        self.write_line("    if (colon) {");
+        self.write_line("        size_t hlen = colon - host_port;");
+        self.write_line("        if (hlen < sizeof(host)) { strncpy(host, host_port, hlen); host[hlen] = '\\0'; }");
+        self.write_line("        port = atoi(colon + 1);");
+        self.write_line("    } else {");
+        self.write_line("        strncpy(host, host_port, sizeof(host) - 1);");
+        self.write_line("    }");
+        self.write_line("    int fd = socket(AF_INET, SOCK_STREAM, 0);");
+        self.write_line("    if (fd < 0) return _ox_err((int64_t)(uintptr_t)\"Socket olusturulamadi\");");
+        self.write_line("    struct sockaddr_in sin;");
+        self.write_line("    memset(&sin, 0, sizeof(sin));");
+        self.write_line("    sin.sin_family = AF_INET;");
+        self.write_line("    sin.sin_port = htons(port);");
+        self.write_line("    inet_pton(AF_INET, host, &sin.sin_addr);");
+        self.write_line("    int conn_res = -1;");
+        self.write_line("    for (int retry = 0; retry < 6; retry++) {");
+        self.write_line("        conn_res = connect(fd, (struct sockaddr*)&sin, sizeof(sin));");
+        self.write_line("        if (conn_res == 0) break;");
+        self.write_line("        if (retry < 5) usleep(50000);");
+        self.write_line("    }");
+        self.write_line("    if (conn_res < 0) {");
+        self.write_line("        close(fd);");
+        self.write_line("        return _ox_err((int64_t)(uintptr_t)\"Sunucuya baglanilamadi\");");
+        self.write_line("    }");
+        self.write_line("    size_t blen = strlen(body_data);");
+        self.write_line("    char* req = (char*)_ox_arena_alloc(blen + 512);");
+        self.write_line("    sprintf(req, \"POST %s HTTP/1.1\\r\\nHost: %s\\r\\nContent-Type: %s\\r\\nContent-Length: %zu\\r\\nConnection: close\\r\\n\\r\\n%s\",");
+        self.write_line("            path, host, content_type, blen, body_data);");
+        self.write_line("    send(fd, req, strlen(req), 0);");
+        self.write_line("    char* buf = (char*)_ox_arena_alloc(65536);");
+        self.write_line("    size_t total = 0;");
+        self.write_line("    ssize_t n;");
+        self.write_line("    while ((n = recv(fd, buf + total, 65535 - total, 0)) > 0) {");
+        self.write_line("        total += n;");
+        self.write_line("        if (total >= 65535) break;");
+        self.write_line("    }");
+        self.write_line("    buf[total] = '\\0';");
+        self.write_line("    close(fd);");
+        self.write_line("    const char* body = strstr(buf, \"\\r\\n\\r\\n\");");
+        self.write_line("    if (body) body += 4;");
+        self.write_line("    else {");
+        self.write_line("        body = strstr(buf, \"\\n\\n\");");
+        self.write_line("        if (body) body += 2;");
+        self.write_line("        else body = buf;");
+        self.write_line("    }");
+        self.write_line("    return _ox_ok((int64_t)(uintptr_t)body);");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline const char* _ox_json_stringify_map(_OxMap* m) {");
+        self.write_line("    if (!m) return \"{}\";");
+        self.write_line("    char* res = (char*)_ox_arena_alloc(8192);");
+        self.write_line("    strcpy(res, \"{\");");
+        self.write_line("    bool first = true;");
+        self.write_line("    for (int i = 0; i < _OX_MAP_BUCKETS; i++) {");
+        self.write_line("        _OxMapEntry* e = m->buckets[i];");
+        self.write_line("        while (e) {");
+        self.write_line("            if (!first) strcat(res, \", \");");
+        self.write_line("            first = false;");
+        self.write_line("            strcat(res, \"\\\"\");");
+        self.write_line("            strcat(res, e->key);");
+        self.write_line("            strcat(res, \"\\\": \\\"\");");
+        self.write_line("            strcat(res, e->value ? e->value : \"\");");
+        self.write_line("            strcat(res, \"\\\"\");");
+        self.write_line("            e = e->next;");
+        self.write_line("        }");
+        self.write_line("    }");
+        self.write_line("    strcat(res, \"}\");");
+        self.write_line("    return res;");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxOption _ox_json_get(const char* json, const char* key) {");
+        self.write_line("    if (!json || !key) return _ox_none();");
+        self.write_line("    char pat[128];");
+        self.write_line("    snprintf(pat, sizeof(pat), \"\\\"%s\\\"\", key);");
+        self.write_line("    const char* pos = strstr(json, pat);");
+        self.write_line("    if (!pos) return _ox_none();");
+        self.write_line("    pos += strlen(pat);");
+        self.write_line("    while (*pos && (*pos == ' ' || *pos == '\\t' || *pos == '\\r' || *pos == '\\n')) pos++;");
+        self.write_line("    if (*pos != ':') return _ox_none();");
+        self.write_line("    pos++;");
+        self.write_line("    while (*pos && (*pos == ' ' || *pos == '\\t' || *pos == '\\r' || *pos == '\\n')) pos++;");
+        self.write_line("    if (*pos == '\\\"') {");
+        self.write_line("        pos++;");
+        self.write_line("        const char* end = strchr(pos, '\\\"');");
+        self.write_line("        if (!end) return _ox_none();");
+        self.write_line("        size_t len = end - pos;");
+        self.write_line("        char* val = (char*)_ox_arena_alloc(len + 1);");
+        self.write_line("        strncpy(val, pos, len);");
+        self.write_line("        val[len] = '\\0';");
+        self.write_line("        return _ox_some((int64_t)(uintptr_t)val);");
+        self.write_line("    } else {");
+        self.write_line("        const char* end = pos;");
+        self.write_line("        while (*end && *end != ',' && *end != '}' && *end != ']' && *end != ' ' && *end != '\\t' && *end != '\\r' && *end != '\\n') end++;");
+        self.write_line("        size_t len = end - pos;");
+        self.write_line("        char* val = (char*)_ox_arena_alloc(len + 1);");
+        self.write_line("        strncpy(val, pos, len);");
+        self.write_line("        val[len] = '\\0';");
+        self.write_line("        return _ox_some((int64_t)(uintptr_t)val);");
+        self.write_line("    }");
+        self.write_line("}");
+        self.write_line("");
+        self.write_line("static inline _OxResult _ox_json_parse(const char* json) {");
+        self.write_line("    if (!json) return _ox_err((int64_t)(uintptr_t)\"Null JSON string\");");
+        self.write_line("    const char* p = json;");
+        self.write_line("    while (*p && (*p == ' ' || *p == '\\t' || *p == '\\r' || *p == '\\n')) p++;");
+        self.write_line("    if (*p != '{') return _ox_err((int64_t)(uintptr_t)\"JSON nesnesi '{' ile baslamalidir\");");
+        self.write_line("    p++;");
+        self.write_line("    _OxMap* m = _ox_map_new();");
+        self.write_line("    while (*p) {");
+        self.write_line("        while (*p && (*p == ' ' || *p == '\\t' || *p == '\\r' || *p == '\\n' || *p == ',')) p++;");
+        self.write_line("        if (*p == '}' || !*p) break;");
+        self.write_line("        if (*p != '\\\"') return _ox_err((int64_t)(uintptr_t)\"JSON anahtari tirnak ile baslamalidir\");");
+        self.write_line("        p++;");
+        self.write_line("        const char* key_start = p;");
+        self.write_line("        const char* key_end = strchr(p, '\\\"');");
+        self.write_line("        if (!key_end) return _ox_err((int64_t)(uintptr_t)\"Eksik anahtar tirnagi\");");
+        self.write_line("        size_t klen = key_end - key_start;");
+        self.write_line("        char* key = (char*)_ox_arena_alloc(klen + 1);");
+        self.write_line("        strncpy(key, key_start, klen);");
+        self.write_line("        key[klen] = '\\0';");
+        self.write_line("        p = key_end + 1;");
+        self.write_line("        while (*p && (*p == ' ' || *p == '\\t' || *p == '\\r' || *p == '\\n')) p++;");
+        self.write_line("        if (*p != ':') return _ox_err((int64_t)(uintptr_t)\"JSON ':' bekleniyordu\");");
+        self.write_line("        p++;");
+        self.write_line("        while (*p && (*p == ' ' || *p == '\\t' || *p == '\\r' || *p == '\\n')) p++;");
+        self.write_line("        char* val = \"\";");
+        self.write_line("        if (*p == '\\\"') {");
+        self.write_line("            p++;");
+        self.write_line("            const char* val_start = p;");
+        self.write_line("            const char* val_end = strchr(p, '\\\"');");
+        self.write_line("            if (!val_end) return _ox_err((int64_t)(uintptr_t)\"Eksik deger tirnagi\");");
+        self.write_line("            size_t vlen = val_end - val_start;");
+        self.write_line("            val = (char*)_ox_arena_alloc(vlen + 1);");
+        self.write_line("            strncpy(val, val_start, vlen);");
+        self.write_line("            val[vlen] = '\\0';");
+        self.write_line("            p = val_end + 1;");
+        self.write_line("        } else {");
+        self.write_line("            const char* val_start = p;");
+        self.write_line("            while (*p && *p != ',' && *p != '}' && *p != ' ' && *p != '\\t' && *p != '\\r' && *p != '\\n') p++;");
+        self.write_line("            size_t vlen = p - val_start;");
+        self.write_line("            val = (char*)_ox_arena_alloc(vlen + 1);");
+        self.write_line("            strncpy(val, val_start, vlen);");
+        self.write_line("            val[vlen] = '\\0';");
+        self.write_line("        }");
+        self.write_line("        _ox_map_set(m, key, val);");
+        self.write_line("    }");
+        self.write_line("    return _ox_ok((int64_t)(uintptr_t)m);");
+        self.write_line("}");
+        self.write_line("");
 
         // Enums definition
         for item in &program.items {
@@ -2375,7 +2664,7 @@ impl CodegenC {
                             _ => None,
                         };
                         if let Some(in_t) = inner_ty {
-                            if matches!(in_t, Type::Box(_) | Type::Rc(_) | Type::RefCell(_) | Type::Str | Type::TcpListener | Type::TcpStream | Type::JoinHandle(_) | Type::Sender(_) | Type::Receiver(_) | Type::Mutex(_)) {
+                            if matches!(in_t, Type::Box(_) | Type::Rc(_) | Type::RefCell(_) | Type::Str | Type::TcpListener | Type::TcpStream | Type::JoinHandle(_) | Type::Sender(_) | Type::Receiver(_) | Type::Mutex(_) | Type::Named(_)) {
                                 let c_ty = self.to_c_type(&in_t);
                                 format!("(({})(uintptr_t)_ox_unwrap({}))", c_ty, t)
                             } else {
@@ -2507,6 +2796,29 @@ impl CodegenC {
                     "TcpStream::connect" | "net::TcpStream::connect" => {
                         format!("_ox_tcp_stream_connect({})", self.compile_expr(&args[0]))
                     }
+                    "http::request_method" => format!("_ox_http_request_method({})", self.compile_expr(&args[0])),
+                    "http::request_path" => format!("_ox_http_request_path({})", self.compile_expr(&args[0])),
+                    "http::request_body" => format!("_ox_http_request_body({})", self.compile_expr(&args[0])),
+                    "http::response" => format!("_ox_http_response((int64_t)({}), {}, {})", self.compile_expr(&args[0]), self.compile_expr(&args[1]), self.compile_expr(&args[2])),
+                    "http::get" => format!("_ox_http_get({})", self.compile_expr(&args[0])),
+                    "http::post" => format!("_ox_http_post({}, {}, {})", self.compile_expr(&args[0]), self.compile_expr(&args[1]), self.compile_expr(&args[2])),
+                    "json::stringify" => {
+                        let arg_ty = self.infer_expr_type(&args[0]);
+                        let is_map = if let Type::Named(ref n) = arg_ty {
+                            n == "Map"
+                        } else if let Expr::Ident(ref name, _) = args[0] {
+                            self.var_ox_types.get(name).map_or(false, |t| matches!(t, Type::Named(n) if n == "Map"))
+                        } else {
+                            false
+                        };
+                        if is_map {
+                            format!("_ox_json_stringify_map((_OxMap*)({}))", self.compile_expr(&args[0]))
+                        } else {
+                            format!("_ox_to_str({})", self.compile_expr(&args[0]))
+                        }
+                    }
+                    "json::parse" => format!("_ox_json_parse({})", self.compile_expr(&args[0])),
+                    "json::get" => format!("_ox_json_get({}, {})", self.compile_expr(&args[0]), self.compile_expr(&args[1])),
                     "get_env" => format!("_ox_get_env({})", self.compile_expr(&args[0])),
                     "exit" => format!("exit((int)({}))", self.compile_expr(&args[0])),
                     "map_new" => "_ox_map_new()".to_string(),

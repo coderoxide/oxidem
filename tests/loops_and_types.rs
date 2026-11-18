@@ -829,3 +829,53 @@ fn test_network_and_tcp_sockets() {
     let _ = std::fs::remove_file(bin_path);
     let _ = std::fs::remove_file(format!("{}.c", bin_path));
 }
+
+#[test]
+fn test_http_and_json_support() {
+    // 1. check
+    let check_status = Command::new("cargo")
+        .args(["run", "--quiet", "--", "check", "examples/http_and_json_demo.ox"])
+        .status()
+        .expect("cargo run check failed");
+    assert!(check_status.success());
+
+    // 2. run (interpreter)
+    let run_output = Command::new("cargo")
+        .args(["run", "--quiet", "--", "run", "examples/http_and_json_demo.ox"])
+        .output()
+        .expect("cargo run run failed");
+    assert!(run_output.status.success());
+    let run_stdout = String::from_utf8_lossy(&run_output.stdout);
+
+    // 3. build (GCC native)
+    let bin_path = "examples/test_native_http_bin";
+    let build_status = Command::new("cargo")
+        .args(["run", "--quiet", "--", "build", "examples/http_and_json_demo.ox", "-o", bin_path])
+        .status()
+        .expect("cargo run build failed");
+    assert!(build_status.success());
+
+    // 4. execute native binary
+    let exec_output = Command::new(format!("./{}", bin_path))
+        .output()
+        .expect("failed to execute native binary");
+    assert!(exec_output.status.success());
+    let exec_stdout = String::from_utf8_lossy(&exec_output.stdout);
+
+    // 5. Parity & content assertion
+    assert!(run_stdout.contains("json::parse cozulen isim: Oxide"));
+    assert!(run_stdout.contains("json::get 'tur': Sistem Programlama Dili"));
+    assert!(run_stdout.contains("Istemci Alinan GET Govdesi: {\"status\": \"OK\", \"msg\": \"Oxide HTTP Sunucusu Aktif\"}"));
+    assert!(run_stdout.contains("Istemci Alinan POST Govdesi: {\"sonuc\": \"Eklendi\", \"user\": \"Can\"}"));
+    assert!(run_stdout.contains("=== Tum HTTP ve JSON Testleri Basariyla Tamamlandi! ==="));
+
+    assert!(exec_stdout.contains("json::parse cozulen isim: Oxide"));
+    assert!(exec_stdout.contains("json::get 'tur': Sistem Programlama Dili"));
+    assert!(exec_stdout.contains("Istemci Alinan GET Govdesi: {\"status\": \"OK\", \"msg\": \"Oxide HTTP Sunucusu Aktif\"}"));
+    assert!(exec_stdout.contains("Istemci Alinan POST Govdesi: {\"sonuc\": \"Eklendi\", \"user\": \"Can\"}"));
+    assert!(exec_stdout.contains("=== Tum HTTP ve JSON Testleri Basariyla Tamamlandi! ==="));
+
+    // Cleanup
+    let _ = std::fs::remove_file(bin_path);
+    let _ = std::fs::remove_file(format!("{}.c", bin_path));
+}

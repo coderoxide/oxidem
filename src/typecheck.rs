@@ -1428,6 +1428,98 @@ impl TypeChecker {
                         }
                         return Ok(Type::Result(Box::new(Type::TcpStream), Box::new(Type::Str)));
                     }
+                    "http::request_method" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'http::request_method' 1 argüman bekler: (raw_req: str)", span.line, span.col));
+                        }
+                        let r_ty = self.check_expr(&args[0])?;
+                        if !self.are_types_compatible(&Type::Str, &r_ty) {
+                            return Err(format!("Tip Hatası [{}:{}]: 'http::request_method' 'str' bekler", span.line, span.col));
+                        }
+                        return Ok(Type::Str);
+                    }
+                    "http::request_path" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'http::request_path' 1 argüman bekler: (raw_req: str)", span.line, span.col));
+                        }
+                        let r_ty = self.check_expr(&args[0])?;
+                        if !self.are_types_compatible(&Type::Str, &r_ty) {
+                            return Err(format!("Tip Hatası [{}:{}]: 'http::request_path' 'str' bekler", span.line, span.col));
+                        }
+                        return Ok(Type::Str);
+                    }
+                    "http::request_body" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'http::request_body' 1 argüman bekler: (raw_req: str)", span.line, span.col));
+                        }
+                        let r_ty = self.check_expr(&args[0])?;
+                        if !self.are_types_compatible(&Type::Str, &r_ty) {
+                            return Err(format!("Tip Hatası [{}:{}]: 'http::request_body' 'str' bekler", span.line, span.col));
+                        }
+                        return Ok(Type::Str);
+                    }
+                    "http::response" => {
+                        if args.len() != 3 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'http::response' 3 argüman bekler: (status: int, content_type: str, body: str)", span.line, span.col));
+                        }
+                        let s_ty = self.check_expr(&args[0])?;
+                        let c_ty = self.check_expr(&args[1])?;
+                        let b_ty = self.check_expr(&args[2])?;
+                        if !self.are_types_compatible(&Type::Int, &s_ty) || !self.are_types_compatible(&Type::Str, &c_ty) || !self.are_types_compatible(&Type::Str, &b_ty) {
+                            return Err(format!("Tip Hatası [{}:{}]: 'http::response' (int, str, str) parametreleri bekler", span.line, span.col));
+                        }
+                        return Ok(Type::Str);
+                    }
+                    "http::get" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'http::get' 1 argüman bekler: (url: str)", span.line, span.col));
+                        }
+                        let u_ty = self.check_expr(&args[0])?;
+                        if !self.are_types_compatible(&Type::Str, &u_ty) {
+                            return Err(format!("Tip Hatası [{}:{}]: 'http::get' 'str' bekler", span.line, span.col));
+                        }
+                        return Ok(Type::Result(Box::new(Type::Str), Box::new(Type::Str)));
+                    }
+                    "http::post" => {
+                        if args.len() != 3 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'http::post' 3 argüman bekler: (url: str, body: str, content_type: str)", span.line, span.col));
+                        }
+                        let u_ty = self.check_expr(&args[0])?;
+                        let b_ty = self.check_expr(&args[1])?;
+                        let c_ty = self.check_expr(&args[2])?;
+                        if !self.are_types_compatible(&Type::Str, &u_ty) || !self.are_types_compatible(&Type::Str, &b_ty) || !self.are_types_compatible(&Type::Str, &c_ty) {
+                            return Err(format!("Tip Hatası [{}:{}]: 'http::post' (str, str, str) bekler", span.line, span.col));
+                        }
+                        return Ok(Type::Result(Box::new(Type::Str), Box::new(Type::Str)));
+                    }
+                    "json::stringify" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'json::stringify' 1 argüman bekler", span.line, span.col));
+                        }
+                        self.check_expr(&args[0])?;
+                        return Ok(Type::Str);
+                    }
+                    "json::parse" => {
+                        if args.len() != 1 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'json::parse' 1 argüman bekler: (json_str: str)", span.line, span.col));
+                        }
+                        let j_ty = self.check_expr(&args[0])?;
+                        if !self.are_types_compatible(&Type::Str, &j_ty) {
+                            return Err(format!("Tip Hatası [{}:{}]: 'json::parse' 'str' bekler", span.line, span.col));
+                        }
+                        return Ok(Type::Result(Box::new(Type::Named("Map".to_string())), Box::new(Type::Str)));
+                    }
+                    "json::get" => {
+                        if args.len() != 2 {
+                            return Err(format!("Tip Hatası [{}:{}]: 'json::get' 2 argüman bekler: (json_str: str, key: str)", span.line, span.col));
+                        }
+                        let j_ty = self.check_expr(&args[0])?;
+                        let k_ty = self.check_expr(&args[1])?;
+                        if !self.are_types_compatible(&Type::Str, &j_ty) || !self.are_types_compatible(&Type::Str, &k_ty) {
+                            return Err(format!("Tip Hatası [{}:{}]: 'json::get' (str, str) bekler", span.line, span.col));
+                        }
+                        return Ok(Type::Option(Box::new(Type::Str)));
+                    }
                     "Box::new" => {
                         if args.len() != 1 {
                             return Err(format!("Tip Hatası [{}:{}]: 'Box::new' tam 1 argüman bekler", span.line, span.col));

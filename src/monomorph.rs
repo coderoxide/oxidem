@@ -1185,6 +1185,10 @@ impl Monomorphizer {
                         }
                         "TcpListener::bind" | "net::TcpListener::bind" => Ok(Type::Result(Box::new(Type::TcpListener), Box::new(Type::Str))),
                         "TcpStream::connect" | "net::TcpStream::connect" => Ok(Type::Result(Box::new(Type::TcpStream), Box::new(Type::Str))),
+                        "http::request_method" | "http::request_path" | "http::request_body" | "http::response" | "json::stringify" => Ok(Type::Str),
+                        "http::get" | "http::post" => Ok(Type::Result(Box::new(Type::Str), Box::new(Type::Str))),
+                        "json::parse" => Ok(Type::Result(Box::new(Type::Named("Map".to_string())), Box::new(Type::Str))),
+                        "json::get" => Ok(Type::Option(Box::new(Type::Str))),
                         "len" | "to_int" => Ok(Type::Int),
                         "to_float" => Ok(Type::Float),
                         "to_char" => Ok(Type::Char),
