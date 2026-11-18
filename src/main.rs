@@ -147,6 +147,9 @@ fn main() {
         "fmt" => {
             handle_fmt_command(&args[2..]);
         }
+        "version" | "--version" | "-V" => {
+            println!("oxide 1.0.0 (x86_64-unknown-linux-gnu, pure Rust standard library)");
+        }
         "help" | "--help" | "-h" => {
             print_help();
         }
@@ -163,7 +166,7 @@ fn main() {
 fn print_help() {
     println!(r#"
 ╔════════════════════════════════════════════════════════╗
-║             OXIDE PROGRAMLAMA DİLİ                     ║
+║             OXIDE PROGRAMLAMA DİLİ v1.0.0              ║
 ║       (Rust Tabanlı Sistem Dili Tasarımı)              ║
 ╚════════════════════════════════════════════════════════╝
 
@@ -180,6 +183,7 @@ Kullanım:
   oxide ast <dosya.ox>                     Programın AST (Sözdizim Ağacı) çıktısını verir
   oxide hir <dosya.ox> [--opt]             Programın HIR (CFG & BasicBlocks) dökümünü verir
   oxide repl                               Etkileşimli REPL ortamını başlatır
+  oxide version, -V, --version             Sürüm bilgisini gösterir (v1.0.0)
   oxide help                               Bu yardım mesajını gösterir
 
 Build Seçenekleri:

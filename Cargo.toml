@@ -1,6 +1,13 @@
 [package]
 name = "oxide"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+description = "Oxide (.ox) - Modern Systems Programming Language written from scratch in pure Rust"
+authors = ["Can <can@oxide.org>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/coderoxide/oxidem"
+readme = "README.md"
+keywords = ["compiler", "interpreter", "systems-programming", "language", "oxide"]
+categories = ["compilers", "development-tools"]
 
 [dependencies]

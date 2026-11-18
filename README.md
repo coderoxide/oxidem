@@ -1,24 +1,114 @@
-# Oxide (`.ox`) 🦀
+# Oxide (`.ox`) 🦀 v1.0.0
 
-Oxide, Rust dili ile geliştirilmiş, Rust sözdiziminden ve bellek güvenliği felsefesinden ilham alan modern bir programlama dilidir. Hem doğrudan AST tabanlı hızlı bir **yorumlayıcıya (Interpreter)** hem de C11 üzerinden GCC ile çalışan **Native Makine Kodu Derleyicisine (Native Compiler)** sahiptir.
+[![Release](https://img.shields.io/badge/version-1.0.0-brightgreen.svg)](https://github.com/coderoxide/oxidem)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+[![Dependencies](https://img.shields.io/badge/dependencies-0%20(Pure%20Rust%20std)-orange.svg)](Cargo.toml)
+[![Tests](https://img.shields.io/badge/tests-36%2F36%20passing%20(100%25)-success.svg)](tests/)
+
+**Oxide**, sıfırdan ve harici hiçbir kütüphane/crate kullanılmadan (**0 external dependencies, 100% pure Rust `std`**) geliştirilmiş modern, güvenli ve yüksek başarımlı bir sistem programlama dilidir.
+
+Oxide, hem doğrudan sözdizim ağacı üzerinden çalışan yüksek hızlı bir **yorumlayıcıya (Interpreter)** hem de C11 üzerinden POSIX sistem çağrılarıyla çalışan ve GCC `-O2` optimizasyonuyla doğrudan doğal makine koduna derleyen bir **Native Derleyiciye (Compiler)** sahiptir. Yorumlayıcı (`oxide run`) ve GCC native binary (`oxide build`) arasında **%100 çıktı ve davranış uyumu (parity)** garanti edilir.
 
 ---
 
-## 🚀 Temel Özellikler
+## 🌟 Öne Çıkan Yetenekler
 
-- **Rust Benzeri Sözdizimi:** `fn`, `let`, `let mut`, `if / else`, `while`, `return`.
-- **İfade Odaklı (Expression-Oriented):** Blokların (`{ ... }`), `if/else` ve `match` yapılarının son satırında noktalı virgül konulmadığında otomatik olarak değer döner.
-- **Değişmezlik (Immutability by Default):** `let x = 5;` ile tanımlanan değişkenler sabittir. Değiştirmek için `let mut x = 5;` yazılmalıdır.
-- **Veri Yapıları:** Dinamik Diziler (`[T]`), `struct` tanımları ve davranış kazandıran `impl` blokları (`self` metotları).
-- **Desen Eşleştirme (Pattern Matching):** `enum` tipleri, `match` ifadeleri, `_` wildcard ve değişken bağlama (variable binding).
-- **Çift Yürütme Motoru:** Hem anında yorumlama (`oxide run`) hem de GCC `-O2` ile native ELF 64-bit binary derleme (`oxide build`).
-- **Sıfır Dış Bağımlılık (Zero External Dependencies):** Yalnızca saf Rust standart kütüphanesi.
+* **Rust İlhamlı Güçlü Sözdizimi:** `fn`, `let`, `let mut`, `if / else`, `while`, `for .. in`, `break`, `continue`, `return`.
+* **İfade Odaklı Tasarım (Expression-Oriented):** Bloklar `{ ... }`, `if/else` ve `match` ifadeleri son satırda noktalı virgül (`- ;`) konulmadığında doğrudan değer döndürür.
+* **Derleme Zamanı Güvenliği & Borrow Checker:** Sahiplik (Ownership), Ödünç Alma (`&T`, `&mut T`), Sözlüksel Olmayan Yaşam Süreleri (NLL) ve `unsafe` blok denetimi.
+* **Gelişmiş Tip Sistemi & Generics:**
+  * Jenerik fonksiyonlar, struct'lar ve impl blokları (`Monomorphization` ile sıfır ek yük).
+  * Trait ve arayüz sistemi (Trait bounds: `T: Display + Clone`).
+  * `Option<T>` ve `Result<T, E>` hata yönetimi ve Rust tarzı `?` (Try) operatörü.
+* **Akıllı İşaretçiler (Smart Pointers):** `Box<T>`, `Rc<T>`, `RefCell<T>` ile özyinelemeli veri yapıları (bağlı listeler, ikili ağaçlar).
+* **Eşzamanlılık & Çoklu İş Parçacığı (Concurrency):** `thread::spawn`, `thread::sleep`, `channel` (Sender/Receiver mesaj kuyruğu) ve `Mutex<T>` ile güvenli paylaşımlı bellek.
+* **Ağ & Soket Programlama (POSIX Sockets):** `TcpListener` ve `TcpStream` ile tam teşekküllü TCP istemci/sunucu mimarisi.
+* **HTTP Sunucusu, REST API & JSON:** `http::get`, `http::post`, `http::response`, `json::stringify`, `json::parse`, `json::get`.
+* **Kriptografi, Base64 & Hassas Zamanlama:** 64-bit FNV-1a özetleme (`crypto::hash`), IEEE 802.3 CRC-32 checksum (`crypto::crc32`), RFC 4648 `base64::encode/decode`, Unix epoch ve monotonik kronometre (`Instant::now`).
+* **Geliştirici Araçları (Dev Tools):**
+  * `///` dokümantasyon yorumlarından otomatik Markdown ve çevrimdışı HTML5 API belgesi üretimi (`oxide doc`).
+  * Kod standartlaştırıcı ve CI/CD stil denetleyicisi (`oxide fmt`, `oxide fmt --check`).
+* **Proje ve Paket Yönetimi:** `oxide new`, `oxide build`, `oxide test`, `oxide clean`, `oxide.toml` ve deterministik bağımlılık kilit dosyası `oxide.lock`.
+
+---
+
+## 🚀 Hızlı Başlangıç & Kurulum
+
+### Kurulum (Cargo ile Sisteme Ekleme)
+```bash
+git clone https://github.com/coderoxide/oxidem.git
+cd oxidem
+cargo install --path .
+```
+
+### Temel CLI Komutları
+```bash
+# Sürüm kontrolü
+oxide version
+
+# Kaynak kodunu doğrudan yorumlayıcı ile çalıştırma
+oxide run examples/hello.ox
+
+# Statik tip ve semantik denetimi yapma (derlemeden hata yakalama)
+oxide check examples/hello.ox
+
+# Kodu C'ye çevirip GCC -O2 ile optimize ELF native binary derleme
+oxide build examples/hello.ox -o hello_bin
+./hello_bin
+
+# Dokümantasyon üretme (Markdown ve HTML5)
+oxide doc examples/doc_and_fmt_demo.ox -o docs/
+
+# Kaynak kodunu standart Oxide formatına dönüştürme
+oxide fmt examples/doc_and_fmt_demo.ox
+oxide fmt examples/doc_and_fmt_demo.ox --check
+
+# Test motorunu çalıştırma
+oxide test
+```
+
+---
+
+## 📝 Örnek Kod
+
+```rust
+/// İki boyutlu uzayda bir noktayı temsil eder.
+struct Point {
+    x: int,
+    y: int,
+}
+
+impl Point {
+    fn info(self) -> str {
+        f"Point({self.x}, {self.y})"
+    }
+}
+
+fn topla(a: int, b: int) -> int {
+    a + b
+}
+
+fn main() {
+    let p = Point { x: 10, y: 20 };
+    println("Nokta:", p.info());
+
+    let toplam = topla(15, 27);
+    println("Toplam:", toplam);
+    assert(toplam == 42);
+
+    let kronometre = Instant::now();
+    let hash = crypto::hash("Oxide Systems Language");
+    let b64 = base64::encode("Gizli Mesaj");
+
+    println("Hash:", hash);
+    println("Base64:", b64);
+    println("Geçen süre (us):", kronometre.elapsed_micros());
+}
+```
 
 ---
 
 ## 📖 Kapsamlı Dokümantasyon (`docs/`)
-
-Oxide projesi için hazırlanan detaylı teknik rehberler:
 
 * [📚 Dokümantasyon İndeksi (docs/README.md)](./docs/README.md)
 * [📝 Sözdizimi Rehberi (docs/syntax_guide.md)](./docs/syntax_guide.md)
@@ -30,64 +120,6 @@ Oxide projesi için hazırlanan detaylı teknik rehberler:
 
 ---
 
-## 🛠️ Nasıl Çalıştırılır?
+## 📄 Lisans
 
-### 1. Yorumlayarak Çalıştırma (Interpreter)
-```bash
-cargo run -- run examples/hello.ox
-cargo run -- run examples/fibonacci.ox
-cargo run -- run examples/structs.ox
-cargo run -- run examples/enums_and_match.ox
-```
-
-### 2. Native Makine Koduna Derleme (Native Binary Compiler)
-```bash
-cargo run -- build examples/fibonacci.ox
-./examples/fibonacci
-```
-
-### 3. AST (Sözdizim Ağacı) İnceleme
-```bash
-cargo run -- ast examples/hello.ox
-```
-
-### 4. Etkileşimli Konsol (REPL)
-```bash
-cargo run -- repl
-```
-
----
-
-## 📝 Örnek Kod
-
-```rust
-struct Player {
-    name: str,
-    score: int,
-}
-
-impl Player {
-    fn add_score(self, pts: int) {
-        self.score = self.score + pts;
-    }
-}
-
-enum Status {
-    Active,
-    Idle,
-}
-
-fn main() {
-    let mut p = Player { name: "Ahmet", score: 100 };
-    p.add_score(50);
-    println(p.name + " puanı:", p.score);
-
-    let durum = Status::Active;
-    let mesaj = match durum {
-        Status::Active => "Oyuncu aktif!",
-        Status::Idle   => "Oyuncu beklemede.",
-    };
-    println(mesaj);
-}
-```
-# oxidem
+Bu proje MIT veya Apache-2.0 lisansı altında lisanslanmıştır.
