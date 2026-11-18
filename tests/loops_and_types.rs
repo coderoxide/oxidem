@@ -927,3 +927,106 @@ fn test_crypto_base64_and_time() {
     let _ = std::fs::remove_file(bin_path);
     let _ = std::fs::remove_file(format!("{}.c", bin_path));
 }
+
+#[test]
+fn test_dev_tools_doc_and_fmt() {
+    // 1. check
+    let check_status = Command::new("cargo")
+        .args(["run", "--quiet", "--", "check", "examples/doc_and_fmt_demo.ox"])
+        .status()
+        .expect("cargo run check failed");
+    assert!(check_status.success());
+
+    // 2. run (interpreter)
+    let run_output = Command::new("cargo")
+        .args(["run", "--quiet", "--", "run", "examples/doc_and_fmt_demo.ox"])
+        .output()
+        .expect("cargo run run failed");
+    assert!(run_output.status.success());
+    let run_stdout = String::from_utf8_lossy(&run_output.stdout);
+
+    // 3. build (GCC native)
+    let bin_path = "examples/test_native_doc_fmt_bin";
+    let build_status = Command::new("cargo")
+        .args(["run", "--quiet", "--", "build", "examples/doc_and_fmt_demo.ox", "-o", bin_path])
+        .status()
+        .expect("cargo run build failed");
+    assert!(build_status.success());
+
+    // 4. execute native binary
+    let exec_output = Command::new(format!("./{}", bin_path))
+        .output()
+        .expect("failed to execute native binary");
+    assert!(exec_output.status.success());
+    let exec_stdout = String::from_utf8_lossy(&exec_output.stdout);
+
+    // 5. Parity & content assertion
+    assert!(run_stdout.contains("Çizilen nokta: Nokta(10, 20)"));
+    assert!(run_stdout.contains("Toplam sonucu: 42"));
+    assert!(run_stdout.contains("Sistem Sürümü: v0.20.0"));
+    assert!(run_stdout.contains("=== Demo Başarıyla Tamamlandı ==="));
+
+    assert!(exec_stdout.contains("Çizilen nokta: Nokta(10, 20)"));
+    assert!(exec_stdout.contains("Toplam sonucu: 42"));
+    assert!(exec_stdout.contains("Sistem Sürümü: v0.20.0"));
+    assert!(exec_stdout.contains("=== Demo Başarıyla Tamamlandı ==="));
+
+    // 6. Test 'oxide doc'
+    let doc_out_dir = "target/test_doc_api";
+    let doc_status = Command::new("cargo")
+        .args(["run", "--quiet", "--", "doc", "examples/doc_and_fmt_demo.ox", "-o", doc_out_dir, "--format", "all"])
+        .status()
+        .expect("cargo run doc failed");
+    assert!(doc_status.success());
+
+    let md_content = std::fs::read_to_string(format!("{}/doc_and_fmt_demo.md", doc_out_dir))
+        .expect("failed to read generated markdown");
+    assert!(md_content.contains("# Modül Dokümantasyonu: doc_and_fmt_demo"));
+    assert!(md_content.contains("const SURUM: str"));
+    assert!(md_content.contains("fn topla(a: int, b: int) -> int"));
+    assert!(md_content.contains("struct Nokta"));
+    assert!(md_content.contains("enum GorevDurumu"));
+    assert!(md_content.contains("trait Cizilebilir"));
+
+    let html_content = std::fs::read_to_string(format!("{}/doc_and_fmt_demo.html", doc_out_dir))
+        .expect("failed to read generated html");
+    assert!(html_content.contains("<!DOCTYPE html>"));
+    assert!(html_content.contains("doc_and_fmt_demo - Oxide API Dokümantasyonu"));
+
+    // 7. Test 'oxide fmt'
+    let raw_snippet = "fn test_fmt( a:int , b:int )->int {\nlet res=a+b;\nif res>0{\nprintln(res);\n}else{\nreturn 0;\n}\nreturn res;\n}\n";
+    let test_ox_path = "target/temp_fmt_test.ox";
+    std::fs::write(test_ox_path, raw_snippet).expect("write temp ox failed");
+
+    // --check fails on unformatted
+    let fmt_check_fail = Command::new("cargo")
+        .args(["run", "--quiet", "--", "fmt", test_ox_path, "--check"])
+        .status()
+        .expect("fmt check failed");
+    assert!(!fmt_check_fail.success());
+
+    // Format in place
+    let fmt_run = Command::new("cargo")
+        .args(["run", "--quiet", "--", "fmt", test_ox_path])
+        .status()
+        .expect("fmt run failed");
+    assert!(fmt_run.success());
+
+    // --check succeeds on formatted
+    let fmt_check_ok = Command::new("cargo")
+        .args(["run", "--quiet", "--", "fmt", test_ox_path, "--check"])
+        .status()
+        .expect("fmt check 2 failed");
+    assert!(fmt_check_ok.success());
+
+    let formatted_content = std::fs::read_to_string(test_ox_path).expect("read formatted failed");
+    assert!(formatted_content.contains("fn test_fmt(a: int, b: int) -> int {"));
+    assert!(formatted_content.contains("    let res = a + b;"));
+    assert!(formatted_content.contains("    } else {"));
+
+    // Cleanup
+    let _ = std::fs::remove_file(bin_path);
+    let _ = std::fs::remove_file(format!("{}.c", bin_path));
+    let _ = std::fs::remove_file(test_ox_path);
+    let _ = std::fs::remove_dir_all(doc_out_dir);
+}

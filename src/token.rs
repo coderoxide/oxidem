@@ -11,6 +11,7 @@ pub enum TokenKind {
     U8Lit(u8),
     BoolLit(bool),
     Ident(String),
+    DocComment(String),
 
     // Keywords
     Fn,

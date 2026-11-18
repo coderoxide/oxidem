@@ -7,7 +7,7 @@ Bu dosya, Rust tabanlı Oxide (`.ox`) programlama dili ve derleyici/yorumlayıc�
 ## 📊 Genel Durum
 - **Proje Adı:** Oxide (`.ox`)
 - **Geliştirme Dili:** Rust (2024 edition)
-- **Mevcut Sürüm:** v0.20.0 (Kriptografi crypto::hash/crc32, Base64 encode/decode, Yüksek Hassasiyetli Zamanlama time::now_millis/now_secs & Instant::now, HTTP Sunucusu, REST API & JSON Desteği http::get/post/response/request_*, json::stringify/parse/get, Ağ ve Soket Programlama TcpListener/TcpStream, Eşzamanlılık ve Çoklu İş Parçacığı thread::spawn/sleep, Mesajlaşma Kanalları channel/send/recv, Karşılıklı Dışlama Mutex<T>, Derleme Zamanı Sabitleri const, Standart Dosya Sistemi fs::, Sistem ve Çevre Değişkenleri env::, Akıllı İşaretçiler Box/Rc/RefCell, Target Build Dizin Mimarisi, oxide.lock Kilit Dosyası, oxide clean, Operator Overloading & Traits, Slices & Range Indexing, String Interpolation f"...", Tuples & Destructuring, Trait & Interface System, Option/Result & Try '?' Operator, Generics & Monomorphization, Closures, Arena Management, HIR Optimizer, Test Engine & oxide.toml)
+- **Mevcut Sürüm:** v0.21.0 (Geliştirici Araçları oxide doc & oxide fmt, Kriptografi crypto::hash/crc32, Base64 encode/decode, Yüksek Hassasiyetli Zamanlama time::now_millis/now_secs & Instant::now, HTTP Sunucusu, REST API & JSON Desteği http::get/post/response/request_*, json::stringify/parse/get, Ağ ve Soket Programlama TcpListener/TcpStream, Eşzamanlılık ve Çoklu İş Parçacığı thread::spawn/sleep, Mesajlaşma Kanalları channel/send/recv, Karşılıklı Dışlama Mutex<T>, Derleme Zamanı Sabitleri const, Standart Dosya Sistemi fs::, Sistem ve Çevre Değişkenleri env::, Akıllı İşaretçiler Box/Rc/RefCell, Target Build Dizin Mimarisi, oxide.lock Kilit Dosyası, oxide clean, Operator Overloading & Traits, Slices & Range Indexing, String Interpolation f"...", Tuples & Destructuring, Trait & Interface System, Option/Result & Try '?' Operator, Generics & Monomorphization, Closures, Arena Management, HIR Optimizer, Test Engine & oxide.toml)
 - **Bağımlılık Durumu:** Sıfır dış bağımlılık (Pure Rust Standard Library)
 - **Çalışma Modları:** Yorumlayıcı (`run`), Tip Denetleyici (`check`), Native GCC Derleyici (`build`), Token Dökücü (`tokens`), AST Dökücü (`ast`), HIR Dökücü (`hir`), REPL (`repl`)
 
@@ -390,20 +390,26 @@ Bu dosya, Rust tabanlı Oxide (`.ox`) programlama dili ve derleyici/yorumlayıc�
 
 ---
 
-### Aşama 25: Geliştirici Araçları (`oxide doc` & `oxide fmt`) (Sıradaki Hedef)
-- [ ] **Belge Üretici (`oxide doc`):**
-  - `///` dokümantasyon yorumlarının sözdizim ayrıştırıcı (parser) tarafından toplanması.
-  - Modüller, fonksiyonlar, struct'lar, trait'ler ve enum'lar için otomatik Markdown ve HTML API dokümantasyonu üretimi (`oxide doc <dosya.ox> -o docs/`).
-- [ ] **Kod Biçimlendirici (`oxide fmt`):**
-  - Standart Oxide stil kurallarına göre kod girintileme (4 boşluk), satır sonları, parantez yerleşimi ve operatör boşluklarını otomatik düzenleme (`oxide fmt <dosya.ox>` veya `oxide fmt --check`).
+### Aşama 25: Geliştirici Araçları (`oxide doc` & `oxide fmt`) (Tamamlandı)
+- [x] **Dokümantasyon Yorumları (`///`):**
+  - Fonksiyonlar, struct'lar, trait'ler, enum'lar ve const sabitleri için `///` doküman yorumlarının lexer/parser seviyesinde toplanması.
+- [x] **Otomatik Belge Üretici (`oxide doc`):**
+  - Modül ve projeler için standart Markdown (`.md`) ve tamamen çevrimdışı, bağımsız modern karanlık temalı HTML5 (`.html`) API dokümantasyonu üretimi.
+  - `-o <dizin>` ve `--format <md|html|all>` parametreleri.
+- [x] **Otomatik Kod Biçimlendirici (`oxide fmt`):**
+  - 4 boşluk girintileme, blok parantez `{ ... }` hizalama, operatör boşlukları (`+`, `-`, `*`, `/`, `==`, `->`, `=>`, vb.), satır sonu boşluk temizliği.
+  - `--check` bayrağı ile CI/CD ortamları için biçimlendirme denetimi (exit code 0/1).
+  - Dosyaları yerinde (in-place) ve toplu biçimlendirme yeteneği.
+- [x] **Otomatik Entegrasyon Testi:** `test_dev_tools_doc_and_fmt` ile 36/36 test başarıyla geçti.
 
 ---
 
-### Aşama 26: v1.0.0 Grand Finale & Dağıtım Sürümü
+### Aşama 26: v1.0.0 Grand Finale & Dağıtım Sürümü (SON AŞAMA)
 - [ ] **Tam Bağımsız Yayın Paketi (Release Packaging):**
-  - Sürümün `v1.0.0` olarak mühürlenmesi.
-  - Kapsamlı dökümantasyon ve örnekler galerisinin son kontrolü.
-  - Production-ready stabilite ve performans onayı.
+  - Sürümün `v1.0.0` olarak mühürlenmesi (`Cargo.toml`, banner'lar, rehberler).
+  - Tam set regression testleri ve örnekler galerisinin son doğrulaması.
+  - Bağımsız release ikili dosyası derlemesi (`oxide build` & `cargo build --release`).
+  - Dilin production-ready kararlılık ve sıfır bağımlılık tescili.
 
 
 

@@ -58,8 +58,31 @@ impl<'a> Lexer<'a> {
                 continue;
             }
 
-            // Comments
+            // Comments & DocComments
             if ch == '/' && self.peek_next() == Some('/') {
+                let third = self.chars.get(self.pos + 2).copied();
+                let fourth = self.chars.get(self.pos + 3).copied();
+                if third == Some('/') && fourth != Some('/') {
+                    self.advance(); // /
+                    self.advance(); // /
+                    self.advance(); // /
+                    let mut doc = String::new();
+                    while let Some(c) = self.peek() {
+                        if c == '\n' {
+                            break;
+                        }
+                        doc.push(c);
+                        self.advance();
+                    }
+                    let doc_text = if doc.starts_with(' ') {
+                        doc[1..].to_string()
+                    } else {
+                        doc
+                    };
+                    tokens.push(Token::new(TokenKind::DocComment(doc_text), span));
+                    continue;
+                }
+
                 while let Some(c) = self.peek() {
                     if c == '\n' {
                         break;

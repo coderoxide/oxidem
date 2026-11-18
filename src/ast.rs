@@ -404,6 +404,7 @@ pub struct Function {
     pub return_type: Type,
     pub body: Block,
     pub span: Span,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -412,6 +413,7 @@ pub struct StructDef {
     pub generic_params: Vec<GenericParam>,
     pub fields: Vec<(String, Type)>,
     pub span: Span,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -430,6 +432,7 @@ pub struct TraitMethod {
     pub return_type: Type,
     pub default_body: Option<Block>,
     pub span: Span,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -438,6 +441,7 @@ pub struct TraitDef {
     pub generic_params: Vec<GenericParam>,
     pub methods: Vec<TraitMethod>,
     pub span: Span,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -445,6 +449,7 @@ pub struct EnumDef {
     pub name: String,
     pub variants: Vec<String>,
     pub span: Span,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -453,6 +458,7 @@ pub struct ConstDef {
     pub ty: Type,
     pub value: Expr,
     pub span: Span,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -302,6 +302,7 @@ impl Interpreter {
                             return_type: f.return_type.clone(),
                             body: Block { stmts: Vec::new(), trailing_expr: None, span: f.span },
                             span: f.span,
+                            doc: None,
                         });
                     }
                 }

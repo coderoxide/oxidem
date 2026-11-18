@@ -309,6 +309,7 @@ impl Monomorphizer {
                                             return_type: tm.return_type.clone(),
                                             body: def_body.clone(),
                                             span: tm.span,
+                                            doc: tm.doc.clone(),
                                         });
                                     }
                                 }
@@ -814,6 +815,7 @@ impl Monomorphizer {
             return_type: spec_ret.clone(),
             body: Block { stmts: Vec::new(), trailing_expr: None, span: gen_fn.span },
             span: gen_fn.span,
+            doc: gen_fn.doc.clone(),
         };
         self.specialized_functions.insert(mangled_name.to_string(), placeholder);
 
@@ -834,6 +836,7 @@ impl Monomorphizer {
             return_type: spec_ret,
             body: spec_body,
             span: gen_fn.span,
+            doc: gen_fn.doc.clone(),
         };
         self.specialized_functions.insert(mangled_name.to_string(), final_fn);
 
@@ -869,6 +872,7 @@ impl Monomorphizer {
             generic_params: Vec::new(),
             fields: spec_fields.clone(),
             span: gen_struct.span,
+            doc: gen_struct.doc.clone(),
         };
 
         self.specialized_structs.insert(mangled_name.clone(), spec_struct);
@@ -910,6 +914,7 @@ impl Monomorphizer {
                         return_type: m_ret,
                         body: m_body,
                         span: m.span,
+                        doc: m.doc.clone(),
                     });
                 }
 

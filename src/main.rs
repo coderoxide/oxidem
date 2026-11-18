@@ -12,6 +12,8 @@ mod borrowck;
 mod opt;
 mod project;
 mod monomorph;
+mod docgen;
+mod formatter;
 
 use std::env;
 use std::fs;
@@ -26,6 +28,8 @@ use typecheck::TypeChecker;
 use loader::ModuleLoader;
 use hir::HirBuilder;
 use borrowck::BorrowChecker;
+use docgen::DocGenerator;
+use formatter::Formatter;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -137,6 +141,12 @@ fn main() {
         "repl" => {
             start_repl();
         }
+        "doc" => {
+            handle_doc_command(&args[2..]);
+        }
+        "fmt" => {
+            handle_fmt_command(&args[2..]);
+        }
         "help" | "--help" | "-h" => {
             print_help();
         }
@@ -164,6 +174,8 @@ Kullanım:
   oxide run [dosya.ox]                     Dosyayı (veya oxide.toml projesini) çalıştırır
   oxide check [dosya.ox]                   Derleme zamanı tip ve semantik denetimini yapar
   oxide build [dosya.ox] [seçenekler]      Kodu target/ içine C'ye çevirip native binary derler
+  oxide doc <dosya.ox> [seçenekler]        Kaynak koddan Markdown/HTML dokümantasyon üretir
+  oxide fmt [dosya.ox] [--check]           Kodları standart Oxide biçimine dönüştürür / denetler
   oxide tokens <dosya.ox>                  Kaynak kodun Lexer token akışını döker
   oxide ast <dosya.ox>                     Programın AST (Sözdizim Ağacı) çıktısını verir
   oxide hir <dosya.ox> [--opt]             Programın HIR (CFG & BasicBlocks) dökümünü verir
@@ -176,7 +188,188 @@ Build Seçenekleri:
   --release            En yüksek optimizasyon seviyesini (-O3) ve release profilini kullanır
   -O0, -O1, -O2, -O3   Özel optimizasyon seviyesi belirler (varsayılan: -O2)
   --cc <derleyici>     Kullanılacak C derleyicisini seçer (varsayılan: gcc, ör. clang)
+
+Doc Seçenekleri:
+  -o <dizin>           Dokümantasyon çıktı klasörü (varsayılan: docs)
+  --format <md|html|all> Üretilecek format (varsayılan: all)
 "#);
+}
+
+fn handle_doc_command(args: &[String]) {
+    if args.is_empty() {
+        eprintln!("Kullanım: oxide doc <dosya.ox> [-o <cikti_klasoru>] [--format <md|html|all>]");
+        return;
+    }
+
+    let mut file_path = None;
+    let mut out_dir = "docs".to_string();
+    let mut format_choice = "all".to_string();
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" => {
+                if i + 1 < args.len() {
+                    out_dir = args[i + 1].clone();
+                    i += 1;
+                } else {
+                    eprintln!("Hata: '-o' bayrağından sonra çıktı dizini belirtilmelidir");
+                    return;
+                }
+            }
+            "--format" => {
+                if i + 1 < args.len() {
+                    format_choice = args[i + 1].to_lowercase();
+                    i += 1;
+                } else {
+                    eprintln!("Hata: '--format' bayrağından sonra 'md', 'html' veya 'all' belirtilmelidir");
+                    return;
+                }
+            }
+            arg if !arg.starts_with('-') && file_path.is_none() => {
+                file_path = Some(arg.to_string());
+            }
+            unknown => {
+                eprintln!("Bilinmeyen 'doc' seçeneği: '{}'", unknown);
+                return;
+            }
+        }
+        i += 1;
+    }
+
+    let file_path = match file_path {
+        Some(p) => p,
+        None => {
+            eprintln!("Hata: Belgelenecek kaynak dosya (.ox) belirtilmedi");
+            return;
+        }
+    };
+
+    let p = Path::new(&file_path);
+    if !p.is_file() {
+        eprintln!("Hata: Belirtilen dosya bulunamadı: '{}'", file_path);
+        return;
+    }
+
+    let file_stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("modul");
+
+    let mut loader = ModuleLoader::new();
+    let program = match loader.load_entry(p) {
+        Ok(prog) => prog,
+        Err(e) => {
+            eprintln!("Sözdizim/Ayrıştırma Hatası: {}", e);
+            return;
+        }
+    };
+
+    if let Err(e) = fs::create_dir_all(&out_dir) {
+        eprintln!("Hata: Çıktı klasörü oluşturulamadı '{}': {}", out_dir, e);
+        return;
+    }
+
+    let title = file_stem;
+
+    if format_choice == "md" || format_choice == "all" {
+        let md = DocGenerator::generate_markdown(&program, title);
+        let md_path = Path::new(&out_dir).join(format!("{}.md", file_stem));
+        if let Err(e) = fs::write(&md_path, md) {
+            eprintln!("Hata: Markdown dosyası yazılamadı '{}': {}", md_path.display(), e);
+            return;
+        }
+        println!("✔ [Dokümantasyon] Markdown üretildi: {}", md_path.display());
+    }
+
+    if format_choice == "html" || format_choice == "all" {
+        let html = DocGenerator::generate_html(&program, title);
+        let html_path = Path::new(&out_dir).join(format!("{}.html", file_stem));
+        if let Err(e) = fs::write(&html_path, html) {
+            eprintln!("Hata: HTML dosyası yazılamadı '{}': {}", html_path.display(), e);
+            return;
+        }
+        println!("✔ [Dokümantasyon] HTML API sayfası üretildi: {}", html_path.display());
+    }
+}
+
+fn handle_fmt_command(args: &[String]) {
+    let mut check_only = false;
+    let mut files = Vec::new();
+
+    for arg in args {
+        if arg == "--check" {
+            check_only = true;
+        } else if !arg.starts_with('-') {
+            files.push(arg.clone());
+        }
+    }
+
+    if files.is_empty() {
+        let mut collected = Vec::new();
+        if let Ok(entries) = fs::read_dir(".") {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file() && p.extension().map_or(false, |ext| ext == "ox") {
+                    collected.push(p.to_string_lossy().to_string());
+                }
+            }
+        }
+        if Path::new("src").is_dir() {
+            if let Ok(entries) = fs::read_dir("src") {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_file() && p.extension().map_or(false, |ext| ext == "ox") {
+                        collected.push(p.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+        if collected.is_empty() {
+            eprintln!("Kullanım: oxide fmt <dosya.ox> [--check]");
+            return;
+        }
+        files = collected;
+    }
+
+    let mut all_formatted = true;
+
+    for file_str in &files {
+        let p = Path::new(file_str);
+        if !p.is_file() {
+            eprintln!("Uyarı: Dosya bulunamadı '{}', atlanıyor.", file_str);
+            continue;
+        }
+
+        let content = match fs::read_to_string(p) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Hata: Dosya okunamadı '{}': {}", file_str, e);
+                continue;
+            }
+        };
+
+        if check_only {
+            if Formatter::check(&content) {
+                println!("✔ '{}' zaten biçimlendirilmiş.", file_str);
+            } else {
+                eprintln!("✖ '{}' biçimlendirme kurallarına uymuyor!", file_str);
+                all_formatted = false;
+            }
+        } else {
+            let formatted = Formatter::format(&content);
+            if formatted != content {
+                if let Err(e) = fs::write(p, formatted) {
+                    eprintln!("Hata: Biçimlendirilmiş dosya kaydedilemedi '{}': {}", file_str, e);
+                } else {
+                    println!("✔ '{}' başarıyla biçimlendirildi.", file_str);
+                }
+            } else {
+                println!("✔ '{}' zaten düzenli, değişiklik yapılmadı.", file_str);
+            }
+        }
+    }
+
+    if check_only && !all_formatted {
+        std::process::exit(1);
+    }
 }
 
 struct BuildConfig {

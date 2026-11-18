@@ -1448,6 +1448,62 @@ println("Geçen süre (us):", gecen_us);
 * Native C derleme modunda (`oxide build`), POSIX `<sys/time.h>` (`gettimeofday` ve `clock_gettime(CLOCK_MONOTONIC, ...)`) sistem çağrıları kullanılarak GCC `-O2` seviyesinde sıfır gecikmeli doğal makine koduna dönüştürülür.
 * Yorumlayıcı ve native binary arasında tam sözleşme ve çıktı uyumluluğu garanti edilir.
 
+---
+
+## 28. Geliştirici Araçları: Dokümantasyon & Kod Biçimlendirici (`oxide doc` & `oxide fmt`)
+
+Oxide v0.21.0 (Aşama 25) ile birlikte kurumsal ölçekli geliştirici araçları (`developer tooling`) doğrudan derleyici bünyesine entegre edilmiştir.
+
+### 28.1. Dokümantasyon Yorumları (`///`)
+Oxide'da fonksiyonlar, struct'lar, trait'ler, enum'lar ve sabitler (`const`) doğrudan `///` ön-ekli dokümantasyon yorumları ile belgelenebilir. Çok satırlı dokümantasyon blokları ayrıştırıcı tarafından otomatik olarak tek bir açıklama metnine birleştirilir:
+
+```rust
+/// İki sayıyı toplayarak sonucu döndürür.
+///
+/// # Argümanlar
+/// * `a` - İlk tamsayı
+/// * `b` - İkinci tamsayı
+fn topla(a: int, b: int) -> int {
+    a + b
+}
+
+/// İki boyutlu uzayda bir noktayı temsil eder.
+struct Nokta {
+    x: int,
+    y: int,
+}
+```
+
+### 28.2. Otomatik Belge Üretici (`oxide doc`)
+`oxide doc` komutu, kaynak kodları ve tüm içe aktarılan modülleri statik olarak analiz eder; sembol imzalarını, alan tiplerini ve `///` açıklamalarını toplayarak standart Markdown ve modern HTML dokümantasyonu üretir:
+
+```bash
+# Markdown ve HTML API dokümantasyonu üretimi (varsayılan: docs/ dizinine)
+oxide doc main.ox
+
+# Özel çıktı dizini ve format seçimi
+oxide doc src/lib.ox -o api_docs/ --format md
+oxide doc src/lib.ox -o web_docs/ --format html
+```
+
+* **Üretilen HTML:** Harici hiçbir CDN/ağ gereksinimi duymayan, tamamen çevrimdışı çalışabilen modern karanlık tema (`dark theme`), responsive düzen ve Rustdoc standartlarında kod blokları içerir.
+* **Üretilen Markdown:** GitHub veya GitLab gibi platformlarda doğrudan görüntülenebilen zengin içindekiler tablosu (`Table of Contents`) barındırır.
+
+### 28.3. Otomatik Kod Biçimlendirici (`oxide fmt`)
+`oxide fmt` komutu, Oxide kaynak kodlarını topluluk stil kılavuzuna (indention 4 boşluk, operatör boşlukları, blok parantez hizalaması, metin/yorum koruması) uygun hale getirir:
+
+```bash
+# Dosyayı yerinde (in-place) biçimlendirir
+oxide fmt src/main.ox
+
+# CI/CD ortamları için denetim modu (biçimlendirme hatası varsa exit code 1 döner)
+oxide fmt src/main.ox --check
+
+# Tüm projedeki .ox dosyalarını toplu biçimlendirir
+oxide fmt
+```
+
+
 
 
 

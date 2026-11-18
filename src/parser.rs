@@ -51,10 +51,24 @@ impl Parser {
         }
     }
 
+    fn collect_doc_comments(&mut self) -> Option<String> {
+        let mut lines = Vec::new();
+        while let TokenKind::DocComment(s) = self.peek_kind() {
+            lines.push(s.clone());
+            self.advance();
+        }
+        if lines.is_empty() {
+            None
+        } else {
+            Some(lines.join("\n"))
+        }
+    }
+
     pub fn parse_program(&mut self) -> Result<Program, String> {
         let mut items = Vec::new();
 
         while !self.is_at_end() {
+            let doc = self.collect_doc_comments();
             if self.check(&TokenKind::Import) {
                 let import_span = self.advance().span;
                 let path = match self.peek().kind.clone() {
@@ -72,17 +86,37 @@ impl Parser {
                 self.expect(TokenKind::Semicolon)?;
                 items.push(Item::Import(path, import_span));
             } else if self.check(&TokenKind::Const) {
-                items.push(Item::Const(self.parse_const()?));
+                let mut c = self.parse_const()?;
+                if c.doc.is_none() {
+                    c.doc = doc;
+                }
+                items.push(Item::Const(c));
             } else if self.check(&TokenKind::Fn) {
-                items.push(Item::Function(self.parse_function()?));
+                let mut f = self.parse_function()?;
+                if f.doc.is_none() {
+                    f.doc = doc;
+                }
+                items.push(Item::Function(f));
             } else if self.check(&TokenKind::Struct) {
-                items.push(Item::Struct(self.parse_struct()?));
+                let mut s = self.parse_struct()?;
+                if s.doc.is_none() {
+                    s.doc = doc;
+                }
+                items.push(Item::Struct(s));
             } else if self.check(&TokenKind::Impl) {
                 items.push(Item::Impl(self.parse_impl()?));
             } else if self.check(&TokenKind::Trait) {
-                items.push(Item::Trait(self.parse_trait()?));
+                let mut t = self.parse_trait()?;
+                if t.doc.is_none() {
+                    t.doc = doc;
+                }
+                items.push(Item::Trait(t));
             } else if self.check(&TokenKind::Enum) {
-                items.push(Item::Enum(self.parse_enum()?));
+                let mut e = self.parse_enum()?;
+                if e.doc.is_none() {
+                    e.doc = doc;
+                }
+                items.push(Item::Enum(e));
             } else if self.check(&TokenKind::Extern) {
                 items.push(Item::Extern(self.parse_extern_block()?));
             } else {
@@ -181,6 +215,7 @@ impl Parser {
             name,
             variants,
             span: enum_tok.span,
+            doc: None,
         })
     }
 
@@ -237,6 +272,7 @@ impl Parser {
             generic_params,
             fields,
             span: struct_tok.span,
+            doc: None,
         })
     }
 
@@ -268,7 +304,12 @@ impl Parser {
 
         let mut methods = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
-            methods.push(self.parse_function()?);
+            let m_doc = self.collect_doc_comments();
+            let mut f = self.parse_function()?;
+            if f.doc.is_none() {
+                f.doc = m_doc;
+            }
+            methods.push(f);
         }
 
         self.expect(TokenKind::RBrace)?;
@@ -289,6 +330,7 @@ impl Parser {
 
         let mut methods = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
+            let m_doc = self.collect_doc_comments();
             let fn_span = self.expect(TokenKind::Fn)?.span;
             let m_name = self.expect_ident()?;
             self.expect(TokenKind::LParen)?;
@@ -341,6 +383,7 @@ impl Parser {
                 return_type,
                 default_body,
                 span: fn_span,
+                doc: m_doc,
             });
         }
 
@@ -350,6 +393,7 @@ impl Parser {
             generic_params,
             methods,
             span: trait_tok.span,
+            doc: None,
         })
     }
 
@@ -408,6 +452,7 @@ impl Parser {
             return_type,
             body,
             span: fn_token.span,
+            doc: None,
         })
     }
 
@@ -615,6 +660,10 @@ impl Parser {
         let mut trailing_expr = None;
 
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
+            if matches!(self.peek_kind(), TokenKind::DocComment(_)) {
+                self.advance();
+                continue;
+            }
             if self.check(&TokenKind::Let) {
                 stmts.push(self.parse_let_stmt()?);
             } else if self.check(&TokenKind::Const) {
@@ -682,6 +731,7 @@ impl Parser {
             ty,
             value,
             span: const_tok.span,
+            doc: None,
         })
     }
 
