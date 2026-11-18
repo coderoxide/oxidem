@@ -1503,6 +1503,81 @@ oxide fmt src/main.ox --check
 oxide fmt
 ```
 
+---
+
+## 29. Yerel Eklentiler, Harici Kütüphaneler & Rust Entegrasyonu (`oxide plugin` & Linker)
+
+Oxide, C ve Rust kütüphaneleriyle sıfır ek yükle (`zero-cost`) konuşabilen tam teşekküllü bir yerel eklenti mimarisine ve dinamik bağlayıcı (linker) altyapısına sahiptir. Bu sayede oyun motorları, grafik kütüphaneleri (**SDL2, OpenGL, Raylib, GLFW**) veya Rust ekosistemindeki herhangi bir crate doğrudan Oxide projelerine dahil edilebilir.
+
+### 29.1. Yerel Eklenti Oluşturma (`oxide plugin new`)
+Yeni bir yerel eklenti şablonu oluşturmak için:
+
+```bash
+# Rust tabanlı yerel eklenti oluşturma (cdylib & C-ABI)
+oxide plugin new fizik_motoru --type rust
+
+# C tabanlı yerel eklenti oluşturma
+oxide plugin new grafik_cekirdegi --type c
+```
+
+Oluşturulan eklenti dizin yapısı:
+```
+plugins/fizik_motoru/
+├── Cargo.toml          # cdylib ve staticlib yapılandırması
+├── src/lib.rs          # #[unsafe(no_mangle)] pub extern "C" fonksiyonları
+└── interface.ox        # Oxide tarafından doğrudan içe aktarılabilen extern "C" başlığı
+```
+
+### 29.2. Eklentileri Derleme (`oxide plugin build`)
+```bash
+# Belirtilen eklentiyi derler ve plugins/ dizininde lib*.so oluşturur
+oxide plugin build plugins/fizik_motoru
+
+# plugins/ altındaki tüm eklentileri toplu derler
+oxide plugin build
+```
+
+### 29.3. Eklentileri Oxide'da Kullanma
+Oluşturulan `interface.ox` doğrudan projeye aktarılır ve fonksiyonlar `unsafe` blok içinde çağrılır:
+
+```rust
+import "plugins/fizik_motoru/interface.ox";
+
+fn main() {
+    unsafe {
+        let sonuc = fizik_motoru_selam();
+        let mesafe = fizik_motoru_mesafe_kare(0.0, 0.0, 3.0, 4.0);
+        println("Mesafe Kare:", mesafe);
+    }
+}
+```
+
+### 29.4. Harici Sistem Kütüphanelerini Bağlama (`-l`, `-L`, `--libs`)
+`oxide build` komutuna doğrudan kütüphane bağlayıcı bayrakları geçilebilir:
+
+```bash
+# SDL2 ve OpenGL kütüphanelerini bağlama
+oxide build oyun.ox -l SDL2 -l GL -o oyun_bin
+
+# Yerel eklenti dizinini tanıtıp bağlama (-Wl,-rpath otomatik eklenir)
+oxide build main.ox -L plugins/fizik_motoru -l fizik_motoru -o app_bin
+```
+
+### 29.5. `oxide.toml` Üzerinden Otomatik Kütüphane Yönetimi
+Projenin `oxide.toml` dosyasında bağımlılıklar tanımlandığında, `oxide build` bunları otomatik olarak bağlar:
+
+```toml
+[package]
+name = "oyun_motoru"
+version = "0.1.0"
+entry = "src/main.ox"
+
+[dependencies]
+libs = ["SDL2", "GL", "m"]
+lib_paths = ["./plugins/fizik_motoru"]
+```
+
+
 
 
 

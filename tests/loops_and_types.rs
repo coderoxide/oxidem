@@ -1030,3 +1030,52 @@ fn test_dev_tools_doc_and_fmt() {
     let _ = std::fs::remove_file(test_ox_path);
     let _ = std::fs::remove_dir_all(doc_out_dir);
 }
+
+#[test]
+fn test_native_plugin_and_libs() {
+    // 1. Build test_fizik plugin
+    let plugin_build = Command::new("cargo")
+        .args(["run", "--quiet", "--", "plugin", "build", "plugins/test_fizik"])
+        .status()
+        .expect("plugin build failed");
+    assert!(plugin_build.success());
+    assert!(std::path::Path::new("plugins/test_fizik/libtest_fizik.so").exists());
+
+    // 2. Build Oxide demo with -L and -l
+    let bin_path = "examples/test_native_plugin_bin";
+    let build_status = Command::new("cargo")
+        .args([
+            "run", "--quiet", "--", "build", "examples/plugin_rust_demo.ox",
+            "-L", "plugins/test_fizik", "-l", "test_fizik", "-o", bin_path,
+        ])
+        .status()
+        .expect("build with plugin failed");
+    assert!(build_status.success());
+
+    // 3. Execute binary
+    let exec_output = Command::new(format!("./{}", bin_path))
+        .output()
+        .expect("execute plugin binary failed");
+    assert!(exec_output.status.success());
+    let stdout = String::from_utf8_lossy(&exec_output.stdout);
+
+    assert!(stdout.contains("Oxide & Rust Native Plugin Demo"));
+    assert!(stdout.contains("[Oxide Rust Plugin: test_fizik] Eklenti başarıyla aktif edildi!"));
+    assert!(stdout.contains("Rust fonksiyonu toplam: 350"));
+    assert!(stdout.contains("Fizik mesafe kare (3-4-5 üçgeni): 25"));
+    assert!(stdout.contains("=== Rust Eklenti Testi Başarıyla Tamamlandı! ==="));
+
+    // 4. Test -l SDL2 linking
+    let sdl_bin = "examples/test_native_sdl2_bin";
+    let sdl_build = Command::new("cargo")
+        .args(["run", "--quiet", "--", "build", "examples/sdl2_game_demo.ox", "-l", "SDL2", "-o", sdl_bin])
+        .status()
+        .expect("sdl build failed");
+    assert!(sdl_build.success());
+
+    // Cleanup
+    let _ = std::fs::remove_file(bin_path);
+    let _ = std::fs::remove_file(format!("{}.c", bin_path));
+    let _ = std::fs::remove_file(sdl_bin);
+    let _ = std::fs::remove_file(format!("{}.c", sdl_bin));
+}

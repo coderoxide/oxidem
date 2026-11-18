@@ -12,6 +12,8 @@ pub struct PackageConfig {
     pub version: String,
     pub entry: String,
     pub description: Option<String>,
+    pub libs: Vec<String>,
+    pub lib_paths: Vec<String>,
 }
 
 impl Default for PackageConfig {
@@ -21,7 +23,24 @@ impl Default for PackageConfig {
             version: "0.1.0".to_string(),
             entry: "src/main.ox".to_string(),
             description: None,
+            libs: Vec::new(),
+            lib_paths: Vec::new(),
         }
+    }
+}
+
+fn parse_string_array(s: &str) -> Vec<String> {
+    let s = s.trim();
+    if s.starts_with('[') && s.ends_with(']') {
+        s[1..s.len() - 1]
+            .split(',')
+            .map(|item| item.trim().trim_matches('"').trim_matches('\'').trim().to_string())
+            .filter(|item| !item.is_empty())
+            .collect()
+    } else if !s.is_empty() {
+        vec![s.trim_matches('"').trim_matches('\'').trim().to_string()]
+    } else {
+        Vec::new()
     }
 }
 
@@ -54,6 +73,12 @@ pub fn parse_oxide_toml(content: &str) -> PackageConfig {
                     "version" => config.version = v.to_string(),
                     "entry" => config.entry = v.to_string(),
                     "description" => config.description = Some(v.to_string()),
+                    _ => {}
+                }
+            } else if current_section == "dependencies" || current_section == "libs" {
+                match k.as_str() {
+                    "libs" => config.libs.extend(parse_string_array(val)),
+                    "lib_paths" => config.lib_paths.extend(parse_string_array(val)),
                     _ => {}
                 }
             }
@@ -128,6 +153,8 @@ description = "Oxide ile yazılmış yeni bir proje"
         version: "0.1.0".to_string(),
         entry: "src/main.ox".to_string(),
         description: Some("Oxide ile yazılmış yeni bir proje".to_string()),
+        libs: Vec::new(),
+        lib_paths: Vec::new(),
     };
     update_lockfile(root, &cfg)?;
 

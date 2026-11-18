@@ -86,6 +86,19 @@ impl ModuleLoader {
             }
         }
 
+        // Also fallback to project root / current working directory if relative to base_dir was not found
+        if base_dir.is_some() {
+            if requested.is_file() {
+                return fs::canonicalize(requested).map_err(|e| format!("Dosya yolu çözümlenemedi '{}': {}", requested.display(), e));
+            }
+            if requested.extension().is_none() {
+                let with_ox = requested.with_extension("ox");
+                if with_ox.is_file() {
+                    return fs::canonicalize(&with_ox).map_err(|e| format!("Dosya yolu çözümlenemedi '{}': {}", with_ox.display(), e));
+                }
+            }
+        }
+
         Err(format!("Dosya bulunamadı: '{}'", full_path.display()))
     }
 

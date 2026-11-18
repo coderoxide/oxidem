@@ -56,6 +56,13 @@ oxide check examples/hello.ox
 oxide build examples/hello.ox -o hello_bin
 ./hello_bin
 
+# Yerel eklenti oluşturma ve derleme (Rust / C)
+oxide plugin new fizik_motoru --type rust
+oxide plugin build plugins/fizik_motoru
+
+# Harici grafik/fizik kütüphaneleriyle derleme (SDL2, OpenGL, Rust .so)
+oxide build oyun.ox -l SDL2 -l GL -o oyun_bin
+
 # Dokümantasyon üretme (Markdown ve HTML5)
 oxide doc examples/doc_and_fmt_demo.ox -o docs/
 

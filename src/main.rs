@@ -14,6 +14,7 @@ mod project;
 mod monomorph;
 mod docgen;
 mod formatter;
+mod plugin;
 
 use std::env;
 use std::fs;
@@ -30,6 +31,7 @@ use hir::HirBuilder;
 use borrowck::BorrowChecker;
 use docgen::DocGenerator;
 use formatter::Formatter;
+use plugin::PluginManager;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -147,6 +149,9 @@ fn main() {
         "fmt" => {
             handle_fmt_command(&args[2..]);
         }
+        "plugin" => {
+            PluginManager::handle_cli(&args[2..]);
+        }
         "version" | "--version" | "-V" => {
             println!("oxide 1.0.0 (x86_64-unknown-linux-gnu, pure Rust standard library)");
         }
@@ -179,6 +184,7 @@ Kullanım:
   oxide build [dosya.ox] [seçenekler]      Kodu target/ içine C'ye çevirip native binary derler
   oxide doc <dosya.ox> [seçenekler]        Kaynak koddan Markdown/HTML dokümantasyon üretir
   oxide fmt [dosya.ox] [--check]           Kodları standart Oxide biçimine dönüştürür / denetler
+  oxide plugin <komut>                     Yerel eklenti yöneticisi (new, build, list)
   oxide tokens <dosya.ox>                  Kaynak kodun Lexer token akışını döker
   oxide ast <dosya.ox>                     Programın AST (Sözdizim Ağacı) çıktısını verir
   oxide hir <dosya.ox> [--opt]             Programın HIR (CFG & BasicBlocks) dökümünü verir
@@ -187,11 +193,14 @@ Kullanım:
   oxide help                               Bu yardım mesajını gösterir
 
 Build Seçenekleri:
-  -o <cikti>           Çıktı dosyasının adını / yolunu belirler
-  --emit-c, -C         C derleyicisini çağırmaz, yalnızca üretilen .c dosyasını kaydeder
-  --release            En yüksek optimizasyon seviyesini (-O3) ve release profilini kullanır
-  -O0, -O1, -O2, -O3   Özel optimizasyon seviyesi belirler (varsayılan: -O2)
-  --cc <derleyici>     Kullanılacak C derleyicisini seçer (varsayılan: gcc, ör. clang)
+  -o <cikti>               Çıktı dosyasının adını / yolunu belirler
+  -l <kütüphane>           Bağlanacak harici sistem/Rust kütüphanesi (ör. -l SDL2, -l GL)
+  -L <dizin>               Harici kütüphane arama dizini (ör. -L ./plugins/physics)
+  --libs "<bayraklar>"     Toplu linker bayrakları (ör. --libs "-lSDL2 -lGL -L./target/release")
+  --emit-c, -C             C derleyicisini çağırmaz, yalnızca üretilen .c dosyasını kaydeder
+  --release                En yüksek optimizasyon seviyesini (-O3) ve release profilini kullanır
+  -O0, -O1, -O2, -O3       Özel optimizasyon seviyesi belirler (varsayılan: -O2)
+  --cc <derleyici>         Kullanılacak C derleyicisini seçer (varsayılan: gcc, ör. clang)
 
 Doc Seçenekleri:
   -o <dizin>           Dokümantasyon çıktı klasörü (varsayılan: docs)
@@ -384,6 +393,8 @@ struct BuildConfig {
     compiler: String,
     is_release: bool,
     project_info: Option<(std::path::PathBuf, project::PackageConfig)>,
+    extra_libs: Vec<String>,
+    lib_paths: Vec<String>,
 }
 
 fn parse_build_args(
@@ -400,6 +411,17 @@ fn parse_build_args(
     let mut opt_level = "-O2".to_string();
     let mut compiler = "gcc".to_string();
     let mut is_release = false;
+    let mut extra_libs = Vec::new();
+    let mut lib_paths = Vec::new();
+
+    if let Some((_, ref cfg)) = project_info {
+        for lib in &cfg.libs {
+            extra_libs.push(format!("-l{}", lib));
+        }
+        for path in &cfg.lib_paths {
+            lib_paths.push(format!("-L{}", path));
+        }
+    }
 
     let mut i = 0;
     while i < args.len() {
@@ -410,6 +432,44 @@ fn parse_build_args(
                     i += 1;
                 } else {
                     return Err("'-o' bayrağından sonra dosya yolu belirtilmelidir".to_string());
+                }
+            }
+            "-l" => {
+                if i + 1 < args.len() {
+                    extra_libs.push(format!("-l{}", args[i + 1]));
+                    i += 1;
+                } else {
+                    return Err("'-l' bayrağından sonra kütüphane adı belirtilmelidir (ör. -l SDL2)".to_string());
+                }
+            }
+            arg if arg.starts_with("-l") && arg.len() > 2 => {
+                extra_libs.push(arg.to_string());
+            }
+            "-L" => {
+                if i + 1 < args.len() {
+                    lib_paths.push(format!("-L{}", args[i + 1]));
+                    i += 1;
+                } else {
+                    return Err("'-L' bayrağından sonra kütüphane arama dizini belirtilmelidir".to_string());
+                }
+            }
+            arg if arg.starts_with("-L") && arg.len() > 2 => {
+                lib_paths.push(arg.to_string());
+            }
+            "--libs" => {
+                if i + 1 < args.len() {
+                    for part in args[i + 1].split_whitespace() {
+                        if part.starts_with("-L") {
+                            lib_paths.push(part.to_string());
+                        } else if part.starts_with("-l") {
+                            extra_libs.push(part.to_string());
+                        } else {
+                            extra_libs.push(format!("-l{}", part));
+                        }
+                    }
+                    i += 1;
+                } else {
+                    return Err("'--libs' bayrağından sonra kütüphane bayrakları belirtilmelidir".to_string());
                 }
             }
             "--emit-c" | "-C" => {
@@ -450,6 +510,8 @@ fn parse_build_args(
         compiler,
         is_release,
         project_info,
+        extra_libs,
+        lib_paths,
     })
 }
 
@@ -617,8 +679,24 @@ fn build_file(config: BuildConfig) {
     println!("⚡ Oxide -> C üretildi: {}", c_file);
     println!("🔨 {} ile native binary derleniyor (Profil: {}, Optimizasyon: {})...", config.compiler, profile, config.opt_level);
 
+    let mut gcc_args = vec![
+        config.opt_level.clone(),
+        c_file.clone(),
+        "-o".to_string(),
+        final_binary.clone(),
+    ];
+    for path in &config.lib_paths {
+        gcc_args.push(path.clone());
+        if let Some(stripped) = path.strip_prefix("-L") {
+            gcc_args.push(format!("-Wl,-rpath,{}", stripped));
+        }
+    }
+    gcc_args.extend(config.extra_libs.clone());
+    gcc_args.push("-lm".to_string());
+    gcc_args.push("-pthread".to_string());
+
     let cc_status = Command::new(&config.compiler)
-        .args(&[&config.opt_level, &c_file, "-o", &final_binary, "-lm", "-pthread"])
+        .args(&gcc_args)
         .status();
 
     match cc_status {
